@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Deadlock Meta Overlay</title>
+  </head>
+  <body>
+    <div id="app">
+      <header class="bar" data-tauri-drag-region>
+        <span class="dot" id="dot"></span>
+        <strong data-tauri-drag-region>DEADLOCK<span>META</span></strong> <small id="build" data-tauri-drag-region style="opacity:.55;font-size:10px;margin-left:4px"></small>
+        <span class="grow" data-tauri-drag-region></span>
+        <button class="icon" id="zoom" title="Ukuran teks">A</button>
+        <button class="icon" id="alpha" title="Transparansi latar">◐</button>
+        <button class="icon" id="voice" title="Suara saran penting (klik untuk nyala/mati)">🔊</button>
+        <span class="mode" id="mode" title="Ctrl+Shift+F">interaktif</span>
+        <button class="icon" id="hide" title="Sembunyikan (Ctrl+Shift+D)">✕</button>
+      </header>
+      <div class="status" id="status">Menunggu Deadlock…</div>
+      <main id="view"></main>
+      <footer>D panel · F klik-tembus · E atur HUD · B sudah beli · H fokus HUD · T tim <span class="muted">(semua Ctrl+Shift)</span></footer>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

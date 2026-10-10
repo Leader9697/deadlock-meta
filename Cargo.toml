@@ -1,0 +1,10 @@
+[workspace]
+resolver = "2"
+members = ["crates/deadlock-live", "apps/desktop/src-tauri"]
+
+[workspace.dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "fs", "io-util", "sync"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+tracing = "0.1"

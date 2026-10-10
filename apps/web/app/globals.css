@@ -1,0 +1,60 @@
+@import "tailwindcss";
+@import "@fontsource-variable/inter";
+@import "@fontsource/barlow-condensed/500.css";
+@import "@fontsource/barlow-condensed/700.css";
+
+@theme {
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Barlow Condensed", "Inter Variable", sans-serif;
+
+  --color-ink: #0d0c0a;
+  --color-panel: #16140f;
+  --color-panel-2: #1d1a14;
+  --color-line: #2c2820;
+  --color-fg: #ece4d1;
+  --color-muted: #998f78;
+  --color-brass: #d8a441;
+  --color-win: #67c27f;
+  --color-loss: #e2675c;
+
+  /* Deadlock shop slot colours */
+  --color-weapon: #e8923a;
+  --color-vitality: #7fbf3f;
+  --color-spirit: #a985e6;
+
+  --color-tier-s: #f0b941;
+  --color-tier-a: #67c27f;
+  --color-tier-b: #6aa7d8;
+  --color-tier-c: #998f78;
+  --color-tier-d: #e2675c;
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  background:
+    radial-gradient(1200px 500px at 15% -10%, rgb(216 164 65 / 0.08), transparent 60%),
+    var(--color-ink);
+  color: var(--color-fg);
+  font-family: var(--font-sans);
+  font-feature-settings: "tnum" 1, "cv11" 1;
+  min-height: 100dvh;
+}
+
+.font-display {
+  font-family: var(--font-display);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Thin custom scrollbar for the dark panels */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-line) transparent;
+}

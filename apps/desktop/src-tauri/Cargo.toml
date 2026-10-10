@@ -1,0 +1,22 @@
+[package]
+name = "deadlock-meta-desktop"
+version = "0.2.0"
+edition = "2021"
+
+[lib]
+name = "deadlock_meta_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+deadlock-live = { path = "../../../crates/deadlock-live" }
+tauri = { version = "2", features = [] }
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-clipboard-manager = "2"
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"

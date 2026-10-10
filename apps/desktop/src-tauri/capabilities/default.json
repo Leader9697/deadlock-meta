@@ -1,0 +1,21 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Overlay window permissions",
+  "windows": [
+    "overlay",
+    "w-*"
+  ],
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging",
+    "core:window:allow-hide",
+    "core:window:allow-set-size",
+    "clipboard-manager:allow-write-text",
+    "core:window:allow-set-ignore-cursor-events",
+    "core:event:allow-emit",
+    "core:event:allow-listen",
+    "updater:default",
+    "process:allow-restart"
+  ]
+}

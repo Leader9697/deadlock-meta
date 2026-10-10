@@ -1,0 +1,46 @@
+# Builds the signed Windows installer + updater files and publishes a GitHub Release.
+# Trigger: push a tag like v0.3.0 (see scripts/bump.mjs), or run manually.
+# Secrets needed: TAURI_SIGNING_PRIVATE_KEY, TAURI_SIGNING_PRIVATE_KEY_PASSWORD.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+
+      - run: npm ci
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: apps/desktop
+          args: --config src-tauri/tauri.bundle.conf.json --config src-tauri/tauri.release.conf.json
+          tagName: ${{ github.ref_type == 'tag' && github.ref_name || 'v__VERSION__' }}
+          releaseName: Deadlock Meta v__VERSION__
+          releaseBody: Lihat commit untuk daftar perubahan. Aplikasi yang sudah terpasang akan menawarkan update ini otomatis.
+          releaseDraft: false
+          prerelease: false
+          includeUpdaterJson: true

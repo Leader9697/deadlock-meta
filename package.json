@@ -1,0 +1,16 @@
+{
+  "name": "deadlock-meta",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w @deadlock/web",
+    "build": "npm run build -w @deadlock/web",
+    "start": "npm run start -w @deadlock/web",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "desktop": "npm run tauri -w @deadlock/desktop -- dev",
+    "desktop:build": "npm run tauri -w @deadlock/desktop -- build --config src-tauri/tauri.bundle.conf.json"
+  }
+}

@@ -1,0 +1,12 @@
+node_modules
+.next
+out
+*.tsbuildinfo
+.env*.local
+apps/desktop/src-tauri/resources/
+apps/desktop/src-tauri/binaries/
+apps/web/.data/
+target
+dist
+apps/desktop/src-tauri/gen/
+*.key
