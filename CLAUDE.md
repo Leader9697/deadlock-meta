@@ -39,6 +39,8 @@ uses the **HUD widgets** in game; he rarely opens the main panel. Keep the HUD c
 - Version label in the header comes from the app version (tauri.conf.json).
 - **Tray icon** (v0.3.2): left click shows/hides the panel, right click menu (Tampilkan panel, klik-tembus,
   atur HUD, Keluar). ✕ / Alt+F4 only hide to the tray; "Keluar" quits for real (stops the bundled site).
+- HUD Coach must never render empty (a blank transparent widget looks like it vanished): with no
+  tips it shows the calm "Farm & ikuti build" line (`coachCard` in main.ts).
 - Form controls that must not be re-rendered while focused (open dropdown closes at once): add the id
   to `GUARDED` in main.ts (`matchInput`, `heroSel`).
 

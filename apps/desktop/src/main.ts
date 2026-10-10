@@ -623,7 +623,8 @@ const TIP_ICON: Record<Tip["kind"], string> = {
 function coachCard(r: LiveResp, hud = false) {
   if (S.live?.winningTeam !== undefined) return "";
   if (!r.tips.length) {
-    return hud ? "" : `<section class="coach calm compact"><div class="coach-main"><span class="coach-ico">✓</span><div><b>Farm & ikuti build</b></div></div></section>`;
+    // never an empty box: a blank HUD Coach looks like the widget vanished mid-match
+    return `<section class="coach calm compact${hud ? " hud" : ""}"><div class="coach-main"><span class="coach-ico">✓</span><div class="coach-txt"><b>Farm & ikuti build</b></div></div></section>`;
   }
   const [main, ...rest] = r.tips;
   const sub = hud
