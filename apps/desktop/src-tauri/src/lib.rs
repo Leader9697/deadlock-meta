@@ -6,7 +6,9 @@ use std::sync::Mutex;
 
 use deadlock_live::{Command, Config, EngineEvent};
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow};
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow, WindowEvent};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 use tokio::sync::mpsc;
 
@@ -181,6 +183,47 @@ fn toggle_visible(app: &AppHandle) {
     }
 }
 
+fn show_panel(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window("overlay") {
+        let _ = w.show();
+        let _ = w.unminimize();
+    }
+}
+
+/// System tray icon: left click shows/hides the panel, right click opens the menu.
+/// Closing the panel (✕, Alt+F4) only hides it to the tray; "Keluar" really quits
+/// (and stops the bundled site, see the Exit event below).
+fn build_tray(app: &tauri::App) -> tauri::Result<()> {
+    let show = MenuItem::with_id(app, "show", "Tampilkan panel (Ctrl+Shift+D)", true, None::<&str>)?;
+    let click = MenuItem::with_id(app, "click", "Mode klik-tembus (Ctrl+Shift+F)", true, None::<&str>)?;
+    let edit = MenuItem::with_id(app, "edit", "Atur posisi HUD (Ctrl+Shift+E)", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "Keluar", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&show, &click, &edit, &PredefinedMenuItem::separator(app)?, &quit])?;
+    let mut tray = TrayIconBuilder::with_id("main")
+        .tooltip(format!("Deadlock Meta v{}", app.package_info().version))
+        .menu(&menu)
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, ev| match ev.id.as_ref() {
+            "show" => show_panel(app),
+            "click" => toggle_click_through(app),
+            "edit" => {
+                toggle_edit(app);
+            }
+            "quit" => app.exit(0),
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, ev| {
+            if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = ev {
+                toggle_visible(tray.app_handle());
+            }
+        });
+    if let Some(icon) = app.default_window_icon() {
+        tray = tray.icon(icon.clone());
+    }
+    tray.build(app)?;
+    Ok(())
+}
+
 fn toggle_click_through(app: &AppHandle) {
     let state = app.state::<AppState>();
     let on = {
@@ -242,7 +285,19 @@ pub fn run() {
                 })
                 .build(),
         )
+        .on_window_event(|window, event| {
+            // the panel never quits the app by itself: hide it to the tray instead
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == "overlay" {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+        })
         .setup(|app| {
+            if let Err(e) = build_tray(app) {
+                eprintln!("tray icon not created: {e}");
+            }
             let (toggle, interact, edit) = shortcuts();
             // A hotkey taken by another program (or a second copy of this app) must not crash the app.
             let mut taken: Vec<&str> = Vec::new();

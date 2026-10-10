@@ -1072,6 +1072,8 @@ interface OverlayData {
 }
 /** why the bundled site is not reachable (from the Rust side), shown in Status koneksi */
 let webNote = "";
+/** form controls that must not be re-rendered while they have focus */
+const GUARDED = new Set(["matchInput", "heroSel"]);
 let lastBroadcast = "";
 function broadcast(force = false) {
   const hud: HudExtra = { focus: S.focus, toast: S.toast, pending: S.pending.map((p) => p.name), lag: S.live ? lagSeconds() : BASE_DELAY, winTrend: winTrend(), team: Date.now() < S.teamUntil, habits: summary?.habits?.hudLines ?? [], souls: (() => {
@@ -1124,8 +1126,8 @@ function render() {
     if (!S.connected) parts.push(heroPickCard());
     parts.push(profileCard());
   }
-  // don't wipe the Match ID box while it is being typed in; render again on blur
-  if ((document.activeElement as HTMLElement | null)?.id === "matchInput") {
+  // don't wipe the Match ID box / the open hero dropdown (a re-render closes it at once); render again on blur
+  if (GUARDED.has((document.activeElement as HTMLElement | null)?.id ?? "")) {
     pendingRender = true;
     return;
   }
@@ -1203,7 +1205,7 @@ document.addEventListener("click", async (e) => {
 
 let pendingRender = false;
 document.addEventListener("focusout", (e) => {
-  if ((e.target as HTMLElement).id === "matchInput" && pendingRender) {
+  if (GUARDED.has((e.target as HTMLElement).id) && pendingRender) {
     pendingRender = false;
     setTimeout(render, 0);
   }
@@ -1230,6 +1232,7 @@ document.addEventListener("change", (e) => {
   }
   if (t.id === "heroSel" && t.value) {
     S.pregameHero = Number(t.value);
+    t.blur(); // lets the deferred render (and the hero's build) through
     void loadHero(S.pregameHero);
   }
 });

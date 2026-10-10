@@ -37,6 +37,10 @@ uses the **HUD widgets** in game; he rarely opens the main panel. Keep the HUD c
 - Hotkeys (all Ctrl+Shift): D panel, F click-through, E edit HUD positions, B "sudah beli" #1,
   H focus mode (only Coach + Beli), T team view.
 - Version label in the header comes from the app version (tauri.conf.json).
+- **Tray icon** (v0.3.2): left click shows/hides the panel, right click menu (Tampilkan panel, klik-tembus,
+  atur HUD, Keluar). ✕ / Alt+F4 only hide to the tray; "Keluar" quits for real (stops the bundled site).
+- Form controls that must not be re-rendered while focused (open dropdown closes at once): add the id
+  to `GUARDED` in main.ts (`matchInput`, `heroSel`).
 
 ## Key modules (packages/core/src)
 adaptive.ts (build path, needs, sell, tiers) · coach.ts (tips) · gameplan.ts (delay-proof plan from
