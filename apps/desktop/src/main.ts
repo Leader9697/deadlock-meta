@@ -1017,7 +1017,7 @@ function connectionCard() {
     ok(d.game, "Deadlock", gameDetail),
     ok(d.log_exists, "console.log", d.log_exists ? `ada · ${ageTxt}` : `tidak ada${d.log_path ? ` di ${esc(d.log_path)}` : ""} → tambahkan -condebug di Launch Options`),
     ok(d.account_id > 0, "Akun Steam", d.account_id > 0 ? `#${d.account_id}` : "tidak ketemu (isi account_id di config)"),
-    ok(S.heroes.size > 0, "Server data", S.heroes.size > 0 ? "siap" : "menyala…"),
+    ok(S.heroes.size > 0, "Server data", S.heroes.size > 0 ? "siap" : webNote ? esc(webNote) : "menyala…"),
     ok(d.match_id != null ? (d.live_connected || S.connected) : null, "Match", d.match_id != null ? `#${d.match_id} · ${d.live_connected || S.connected ? "live tersambung" : "menunggu broadcast (±1–2 mnt setelah match mulai)"}` : "belum ada (muncul otomatis saat match mulai, atau isi manual)"),
   ];
   return `<section class="card"><h3>Status koneksi <small>${d.game ? "siap" : "cek di bawah"}</small></h3>${rows.join("")}
@@ -1070,6 +1070,8 @@ interface OverlayData {
   heroes: [number, MetaHero][];
   scout: ScoutResp | null;
 }
+/** why the bundled site is not reachable (from the Rust side), shown in Status koneksi */
+let webNote = "";
 let lastBroadcast = "";
 function broadcast(force = false) {
   const hud: HudExtra = { focus: S.focus, toast: S.toast, pending: S.pending.map((p) => p.name), lag: S.live ? lagSeconds() : BASE_DELAY, winTrend: winTrend(), team: Date.now() < S.teamUntil, habits: summary?.habits?.hudLines ?? [], souls: (() => {
@@ -1506,19 +1508,22 @@ async function boot() {
   render();
   void checkUpdate();
   // the installed app starts its bundled server at launch: give it time to come up
-  for (let attempt = 0; attempt < 40; attempt++) {
+  // Never give up: a slow first start (antivirus scanning the bundled server) must still recover.
+  for (let attempt = 0; ; attempt++) {
     try {
       const meta = await api<{ heroes: MetaHero[] }>("/api/meta");
       S.heroes = new Map(meta.heroes.map((h) => [h.heroId, h]));
       S.error = "";
+      webNote = "";
       break;
     } catch {
+      webNote = await invoke<string>("web_status").catch(() => "");
       S.error =
         attempt < 6
           ? "Menyalakan server lokal…"
-          : `Website tidak bisa dihubungi (${S.settings?.siteBase}). Cek koneksi internet / proxy (web_env di ${S.settings?.configPath}), atau jalankan npm run dev kalau pakai mode developer.`;
+          : `Website tidak bisa dihubungi (${S.settings?.siteBase}).${webNote ? ` ${webNote}.` : ""} Cek koneksi internet / proxy (web_env di ${S.settings?.configPath}); log server: folder log app, web-server.log.`;
       render();
-      await new Promise((r) => setTimeout(r, attempt < 6 ? 1000 : 3000));
+      await new Promise((r) => setTimeout(r, attempt < 6 ? 1000 : 5000));
     }
   }
   render();

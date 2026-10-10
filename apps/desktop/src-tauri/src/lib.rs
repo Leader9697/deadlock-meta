@@ -12,6 +12,8 @@ use tokio::sync::mpsc;
 
 /// Bundled website server process (installer builds only).
 struct WebServer(Mutex<Option<std::process::Child>>);
+/// What happened when the bundled site was started (shown when it cannot be reached).
+struct WebNote(String);
 
 struct AppState {
     cmd: mpsc::Sender<Command>,
@@ -40,6 +42,20 @@ struct PublicSettings {
 #[tauri::command]
 fn settings(state: State<'_, AppState>) -> PublicSettings {
     state.settings.clone()
+}
+
+/// Why the local site is (not) up: start note, or the exit code + log tail if it died.
+#[tauri::command]
+fn web_status(app: tauri::AppHandle, server: State<'_, WebServer>, note: State<'_, WebNote>) -> String {
+    let mut guard = server.0.lock().unwrap();
+    if let Some(child) = guard.as_mut() {
+        if let Ok(Some(status)) = child.try_wait() {
+            let code = status.code().map_or("?".to_string(), |c| c.to_string());
+            let tail = webserver::log_tail(&app);
+            return format!("server lokal berhenti (kode {code}). {tail}");
+        }
+    }
+    note.0.clone()
 }
 
 #[tauri::command]
@@ -251,8 +267,9 @@ pub fn run() {
             let cfg = Config::load(&config_path).unwrap_or_default();
 
             // installed app: run the bundled website so no terminal is needed
-            let child = webserver::start(app.handle(), &cfg.site_base, cfg.api_key.as_deref(), &cfg.web_env);
+            let (child, note) = webserver::start(app.handle(), &cfg.site_base, cfg.api_key.as_deref(), &cfg.web_env);
             app.manage(WebServer(Mutex::new(child)));
+            app.manage(WebNote(note));
 
             let (cmd_tx, cmd_rx) = mpsc::channel(16);
             let (ev_tx, mut ev_rx) = mpsc::channel::<EngineEvent>(256);
@@ -331,6 +348,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             settings,
+            web_status,
             engine_snapshot,
             set_match,
             stop_live,

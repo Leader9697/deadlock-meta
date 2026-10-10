@@ -50,6 +50,10 @@ habits: deaths before 10:00, souls at 10:00 vs hero average, items always bought
 - Local installer: `npm run desktop:build` → `target/release/bundle/nsis/*-setup.exe`.
 - Typecheck: `npx tsc --noEmit -p packages/core`, `-p apps/web`, `-p apps/desktop`;
   Rust: `cargo check -p deadlock-meta-desktop`, `cargo test -p deadlock-live`.
+- Bundled site not reachable ("Server data ✗" in Status koneksi): the overlay shows why
+  (`web_status` command in lib.rs → `WebNote` from `webserver::start`: port taken, server.js/node.exe
+  missing, spawn blocked, or exit code + tail of `web-server.log` in the app log dir). It retries
+  forever (every 5 s), so a slow first start recovers by itself.
 - Office PC needs a proxy: `[web_env] HTTPS_PROXY=...` in `%APPDATA%/id.faris.deadlockmeta/deadlock-live.toml`.
 
 ## Release / auto-update

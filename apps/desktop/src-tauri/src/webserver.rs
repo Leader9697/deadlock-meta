@@ -27,25 +27,61 @@ fn listening(port: u16) -> bool {
     TcpStream::connect_timeout(&SocketAddr::from(([127, 0, 0, 1], port)), Duration::from_millis(300)).is_ok()
 }
 
-fn node_path() -> Option<PathBuf> {
-    let dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
-    let p = dir.join(if cfg!(windows) { "node.exe" } else { "node" });
-    p.exists().then_some(p)
+/// Windows hands out `\\?\C:\…` paths; Node and several build tools choke on them, so drop it.
+fn plain(p: PathBuf) -> PathBuf {
+    match p.to_str().and_then(|s| s.strip_prefix(r"\\?\")) {
+        Some(rest) => PathBuf::from(rest),
+        None => p,
+    }
 }
 
-pub fn start(app: &AppHandle, site_base: &str, api_key: Option<&str>, extra_env: &BTreeMap<String, String>) -> Option<Child> {
-    let port = local_port(site_base)?;
+fn node_path() -> Result<PathBuf, String> {
+    let exe = std::env::current_exe().map_err(|e| format!("lokasi app tidak terbaca: {e}"))?;
+    let dir = exe.parent().ok_or("lokasi app tidak terbaca")?.to_path_buf();
+    let p = plain(dir.join(if cfg!(windows) { "node.exe" } else { "node" }));
+    if p.exists() {
+        Ok(p)
+    } else {
+        Err(format!("node.exe tidak ada di {} (dihapus antivirus? pasang ulang installer)", p.display()))
+    }
+}
+
+/// Last lines of the server log, for the status screen.
+pub fn log_tail(app: &AppHandle) -> String {
+    let Ok(dir) = app.path().app_log_dir() else { return String::new() };
+    let Ok(text) = std::fs::read_to_string(dir.join("web-server.log")) else { return String::new() };
+    let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
+    let tail = lines[lines.len().saturating_sub(4)..].join(" | ");
+    tail.chars().take(500).collect()
+}
+
+/// Starts the bundled site. The note says what happened (shown in the overlay when the
+/// site cannot be reached), so a failure is never silent.
+pub fn start(app: &AppHandle, site_base: &str, api_key: Option<&str>, extra_env: &BTreeMap<String, String>) -> (Option<Child>, String) {
+    let Some(port) = local_port(site_base) else {
+        return (None, format!("site_base ({site_base}) bukan alamat lokal, server bawaan tidak dinyalakan"));
+    };
     if listening(port) {
-        return None; // dev server or another instance already serves it
+        // dev server or another instance already serves it
+        return (None, format!("port {port} sudah dipakai program lain; kalau data tetap gagal, ganti site_base di config ke port lain (mis. http://localhost:3217)"));
     }
-    let server = app.path().resource_dir().ok()?.join("web").join("apps").join("web").join("server.js");
+    let Some(res) = app.path().resource_dir().ok().map(plain) else {
+        return (None, "folder resource app tidak terbaca".into());
+    };
+    let server = res.join("web").join("apps").join("web").join("server.js");
     if !server.exists() {
-        return None;
+        return (None, format!("server.js tidak ada di {} (mode dev, atau installer tidak lengkap)", server.display()));
     }
-    let node = node_path()?;
+    let node = match node_path() {
+        Ok(n) => n,
+        Err(e) => return (None, e),
+    };
+    let Some(workdir) = server.parent() else {
+        return (None, "folder server tidak valid".into());
+    };
     let mut cmd = Command::new(node);
     cmd.arg(&server)
-        .current_dir(server.parent()?)
+        .current_dir(workdir)
         .env("PORT", port.to_string())
         .env("HOSTNAME", "127.0.0.1")
         .env("NODE_ENV", "production")
@@ -76,12 +112,24 @@ pub fn start(app: &AppHandle, site_base: &str, api_key: Option<&str>, extra_env:
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
-    cmd.spawn().ok()
+    match cmd.spawn() {
+        Ok(child) => {
+            let note = format!("server lokal dinyalakan (pid {}), port {port}", child.id());
+            (Some(child), note)
+        }
+        Err(e) => (None, format!("node tidak bisa dijalankan: {e} (diblokir antivirus/AppLocker?)")),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn extended_length_prefix_is_dropped() {
+        assert_eq!(plain(PathBuf::from(r"\\?\C:\Apps\web")), PathBuf::from(r"C:\Apps\web"));
+        assert_eq!(plain(PathBuf::from("/opt/app")), PathBuf::from("/opt/app"));
+    }
 
     #[test]
     fn only_local_site_bases_get_a_port() {
