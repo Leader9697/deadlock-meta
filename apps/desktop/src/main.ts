@@ -93,6 +93,13 @@ interface LiveResp {
   partner?: { heroId: number; name: string; delta: number; why: string } | null;
   sell?: { sellId: number; sellName: string; refund: number; forId: number; forName: string; reason: string; slotsUsed: number; capacity: number } | null;
   switched?: string | null;
+  audit?: AuditResp | null;
+}
+interface AuditResp {
+  full: boolean;
+  slotsUsed: number;
+  capacity: number;
+  swaps: { sellId: number; sellName: string; sellTier: number; refund: number; buyId: number; buyName: string; buyTier: number; buyCost: number; gain: number; affordable: boolean; missing: number; reason: string }[];
 }
 type PathStep = BuildStep & { locked?: boolean; upgradeFrom?: number; fullCost?: number };
 type Phase = "early" | "mid" | "late" | "vlate";
@@ -474,7 +481,8 @@ function recordSnapshot(r: LiveResp, m: LiveState["players"][number]) {
       macro: r.macro?.action,
       tips: r.tips.map((x) => ({ kind: x.kind, title: x.title })),
       next: r.buildPath.slice(0, 3).map((b) => ({ itemId: b.itemId, kind: b.kind })),
-      needs: (r.needs ?? []).map((n) => ({ kind: n.kind, satisfied: n.satisfied })),
+      needs: (r.needs ?? []).map((n) => ({ kind: n.kind, satisfied: n.satisfied, urgency: n.urgency })),
+      audit: r.audit?.swaps.map((x) => ({ sellId: x.sellId, buyId: x.buyId, gain: x.gain })),
       items: [...m.itemIds],
       deaths: m.deaths,
     });
@@ -687,9 +695,14 @@ function buildPathCard(r: LiveResp) {
   const sell = r.sell
     ? `<div class="small" style="margin-bottom:6px;padding:5px 7px;border-radius:6px;background:rgb(226 103 92 / .12)">💱 <b>Jual ${esc(r.sell.sellName)}</b> (+${k(r.sell.refund)}) → <b>${esc(r.sell.forName)}</b><div class="muted">${esc(r.sell.reason)}</div></div>`
     : "";
+  const auditHtml = r.audit?.swaps.length
+    ? `<div class="small" style="margin-bottom:6px;padding:5px 7px;border-radius:6px;background:rgb(212 175 55 / .12)">🔧 <b>Build ${r.audit.full ? "penuh" : "hampir penuh"}, bisa disempurnakan</b>${r.audit.swaps
+        .map((x) => `<div style="margin-top:3px"><b>${esc(x.sellName)}</b> (T${x.sellTier}) → <b>${esc(x.buyName)}</b> (T${x.buyTier}, ${k(x.buyCost)}) ${x.affordable ? `<span class="tag ok">BISA</span>` : `<span class="small muted">kurang ${k(x.missing)}</span>`}<div class="muted">${esc(x.reason)}</div></div>`)
+        .join("")}</div>`
+    : "";
   const sw = r.switched ? `<div class="small" style="margin-bottom:6px">↺ <b>Target diganti:</b> <span class="muted">${esc(r.switched)}</span></div>` : "";
   return `<section class="card">
-    <h3>Beli berikutnya ${head}</h3>${sell}${sw}${
+    <h3>Beli berikutnya ${head}</h3>${sell}${auditHtml}${sw}${
       S.pending.length
         ? `<div class="small muted" style="margin-bottom:6px">✓ Ditandai sudah beli: ${S.pending.map((p) => `${esc(p.name)} <button class="copy" data-unbought="${p.itemId}">batal</button>`).join(", ")} <span>(sampai broadcast menyusul)</span></div>`
         : ""
@@ -1308,8 +1321,10 @@ function beliHud(r: LiveResp) {
   const m = me()!;
   const steps = r.buildPath.slice(0, HUD.focus ? 2 : 3);
   const sell = r.sell ? `<div class="hud-line loss">💱 Jual <b>${esc(r.sell.sellName)}</b> (+${k(r.sell.refund)}) → ${esc(r.sell.forName)}</div>` : "";
+  const au = r.audit?.swaps[0];
+  const auditLine = au ? `<div class="hud-line">🔧 Ganti <b>${esc(au.sellName)}</b> → <b>${esc(au.buyName)}</b> ${au.affordable ? "" : `<span class="small muted">−${k(au.missing)}</span>`}</div>` : "";
   const im = steps[0] ? r.imbue?.find((x) => x.itemId === steps[0].itemId) : undefined;
-  return `<section class="card hud beli"><h3>Beli <small>${r.adaptive ? `${PHASE_NAME[r.adaptive.phase]} · ` : ""}${k(HUD_SOULS ?? soulsNow(m))} souls</small></h3>${sell}${steps
+  return `<section class="card hud beli"><h3>Beli <small>${r.adaptive ? `${PHASE_NAME[r.adaptive.phase]} · ` : ""}${k(HUD_SOULS ?? soulsNow(m))} souls</small></h3>${sell}${auditLine}${steps
     .map(
       (s2, i) => `<div class="step ${s2.affordable ? "ok" : ""}"><span class="num-badge">${i + 1}</span><div class="grow2"><div class="row"><span class="name ${SLOT_CLS[s2.slot as keyof typeof SLOT_CLS] ?? ""}">${esc(s2.name)}</span><span class="small">${k(s2.cost)}</span>${s2.kind === "flex" ? `<span class="tag flex">FLEX</span>` : ""}${
         r.sell && r.sell.forId === s2.itemId ? `<span class="tag loss">JUAL DULU</span>` : s2.affordable ? `<span class="tag ok">BISA</span>` : `<span class="small muted">−${k(s2.missing)}</span>`

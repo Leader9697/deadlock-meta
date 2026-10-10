@@ -4,6 +4,7 @@ import {
   formatClock,
   gamePlan,
   adaptivePath,
+  buildAudit,
   sellAdvice,
   analyzeAbilityOrders,
   heroAbilities,
@@ -363,6 +364,25 @@ export async function POST(req: NextRequest) {
   if (adaptive.switched && state.winningTeam === undefined) {
     spikeTips.push({ kind: "buy", priority: 57, title: "Target beli diganti", detail: adaptive.switched });
   }
+  // ---- full-build audit: nothing left to buy (or every slot taken) → is an owned item worth swapping? ----
+  const auditRaw = buildAudit({
+    me,
+    lab,
+    gameTimeS: state.gameTimeS,
+    counter: nowList,
+    heroItemDelta: (id) => heroDelta.get(id) ?? null,
+    needs,
+    flexUnlocked: state.flexSlots?.[me.team] ?? 0,
+    next: adaptive.steps,
+    keepIds: new Set(combo.steps.filter((st) => st.isItem).map((st) => st.id)),
+    coreIds: new Set(core?.plan.flatMap((p) => p.steps.map((st) => st.itemId)) ?? []),
+  });
+  const auditShown = state.winningTeam === undefined && phase !== "early" && !sell && (auditRaw.full || adaptive.steps.length === 0) && auditRaw.swaps.length > 0;
+  const audit = auditShown ? auditRaw : null;
+  if (audit) {
+    const top = audit.swaps[0];
+    if (top.affordable) spikeTips.push({ kind: "buy", priority: me.dead ? 70 : 52, title: `Ganti ${top.sellName} → ${top.buyName}`, detail: top.reason });
+  }
 
   if (spikeTips.length) out.tips = [...out.tips, ...spikeTips].sort((a, b) => b.priority - a.priority).slice(0, 3);
 
@@ -414,6 +434,7 @@ export async function POST(req: NextRequest) {
     combo,
     partner,
     sell: sellOk ? sell : null,
+    audit,
     switched: adaptive.switched,
     teamPhases: out.teamPhases,
     buildPath: out.buildPath,

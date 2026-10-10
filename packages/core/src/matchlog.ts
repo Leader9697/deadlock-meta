@@ -15,7 +15,9 @@ export interface LogSnapshot {
   tips: { kind: string; title: string }[];
   /** first steps of the recommended build path */
   next: { itemId: number; kind?: string }[];
-  needs: { kind: string; satisfied: boolean }[];
+  needs: { kind: string; satisfied: boolean; urgency?: number }[];
+  /** swap suggestions of the full-build audit shown at this moment */
+  audit?: { sellId: number; buyId: number; gain: number }[];
   /** my items at this moment */
   items: number[];
   deaths: number;
@@ -51,6 +53,14 @@ export interface Calibration {
   tipKinds: { kind: string; matches: number; winrate: number }[];
   /** need kinds that were left unanswered for >5 min, and the win rate then */
   ignoredNeeds: { kind: string; matches: number; winrate: number }[];
+  /**
+   * Is the urgency number meaningful? Per band: win rate in matches where a need of that
+   * urgency stayed unanswered for >5 min vs matches where it was answered in time. If
+   * high-urgency bands do not show a gap, the urgency formula is not worth trusting.
+   */
+  urgencyBands: { band: string; ignored: { matches: number; winrate: number | null }; answered: { matches: number; winrate: number | null } }[];
+  /** full-build audit: how often a shown swap was actually made (sold X and bought Y within 4 min) */
+  auditFollow: { shown: number; followed: number };
   notes: string[];
 }
 
@@ -150,6 +160,55 @@ export function calibrate(logs: MatchLog[]): Calibration {
   }
   const ignoredNeeds = [...ign.entries()].map(([kind, e]) => ({ kind, matches: e.m, winrate: e.w / e.m })).sort((a, b) => b.matches - a.matches);
 
+  // --- urgency bands: ignored vs answered
+  const bands = [
+    { band: "0.35–0.6", lo: 0.35, hi: 0.6 },
+    { band: "0.6–0.8", lo: 0.6, hi: 0.8 },
+    { band: "≥0.8", lo: 0.8, hi: 9 },
+  ];
+  const urgencyBands = bands.map(({ band, lo, hi }) => {
+    const ig: number[] = [];
+    const an: number[] = [];
+    for (const l of done) {
+      const firstSeen = new Map<string, number>();
+      let ignored = false;
+      let answered = false;
+      for (const s of l.snapshots) {
+        for (const n of s.needs) {
+          if (n.urgency == null || n.urgency < lo || n.urgency >= hi) continue;
+          if (n.satisfied) {
+            if (firstSeen.has(n.kind)) answered = true;
+            firstSeen.delete(n.kind);
+            continue;
+          }
+          if (!firstSeen.has(n.kind)) firstSeen.set(n.kind, s.t);
+          else if (s.t - firstSeen.get(n.kind)! >= 300) ignored = true;
+        }
+      }
+      const y = won(l) ? 1 : 0;
+      if (ignored) ig.push(y);
+      else if (answered) an.push(y);
+    }
+    return { band, ignored: { matches: ig.length, winrate: mean(ig) }, answered: { matches: an.length, winrate: mean(an) } };
+  });
+
+  // --- full-build audit follow-through
+  let auditShown = 0;
+  let auditFollowed = 0;
+  for (const l of done) {
+    const seen = new Set<string>();
+    for (const s of l.snapshots) {
+      for (const a of s.audit ?? []) {
+        const key = `${a.sellId}>${a.buyId}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        auditShown++;
+        const later = l.snapshots.find((x) => x.t > s.t && x.t <= s.t + 240 && x.items.includes(a.buyId) && !x.items.includes(a.sellId));
+        if (later) auditFollowed++;
+      }
+    }
+  }
+
   if (done.length < 10) notes.push(`Baru ${done.length} match selesai tercatat; angka di bawah mulai bisa dipercaya setelah ±10–20 match.`);
   if (brier != null && done.length >= 10) {
     notes.push(
@@ -174,6 +233,8 @@ export function calibrate(logs: MatchLog[]): Calibration {
     follow,
     tipKinds,
     ignoredNeeds,
+    urgencyBands,
+    auditFollow: { shown: auditShown, followed: auditFollowed },
     notes,
   };
 }

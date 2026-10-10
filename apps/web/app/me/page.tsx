@@ -212,6 +212,23 @@ export default async function MePage({ searchParams }: { searchParams: Promise<R
                   ))}
                 </>
               ) : null}
+              {cal.urgencyBands.some((b) => b.ignored.matches + b.answered.matches > 0) ? (
+                <>
+                  <h3 className="mb-1 mt-3 text-xs font-semibold uppercase text-muted">Urgensi kebutuhan: dibiarkan vs dijawab</h3>
+                  {cal.urgencyBands.map((b) => (
+                    <div key={b.band} className="text-sm">
+                      {b.band}: dibiarkan {b.ignored.matches} match (WR {b.ignored.winrate != null ? `${Math.round(b.ignored.winrate * 100)}%` : "–"}) · dijawab {b.answered.matches} match (WR{" "}
+                      {b.answered.winrate != null ? `${Math.round(b.answered.winrate * 100)}%` : "–"})
+                    </div>
+                  ))}
+                  <p className="mt-1 text-xs text-muted">Kalau band urgensi tinggi tidak menunjukkan selisih WR setelah ±20 match, angka urgensinya belum layak dipercaya.</p>
+                </>
+              ) : null}
+              {cal.auditFollow.shown ? (
+                <p className="mt-3 text-sm">
+                  Saran ganti item (build penuh): muncul {cal.auditFollow.shown}×, dilakukan {cal.auditFollow.followed}×
+                </p>
+              ) : null}
             </div>
             <div>
               <h3 className="mb-2 text-xs font-semibold uppercase text-muted">Tip utama yang muncul</h3>

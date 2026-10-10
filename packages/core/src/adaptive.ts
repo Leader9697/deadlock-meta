@@ -17,6 +17,7 @@ import { itemInnate, itemTags, type ItemTag, type LabItem } from "./buildlab";
 import type { CounterItem } from "./counter";
 import type { LivePlayer } from "./live";
 import { GAME_PHASES, type FlowPhasePlan, type GamePhase } from "./phaseplan";
+import { AUDIT_TUNING, NEED_TUNING } from "./tuning";
 import type { HeroType, Item } from "./types";
 
 export const phaseAt = (gameTimeS: number): GamePhase => GAME_PHASES.find((p) => p.toS == null || gameTimeS < p.toS)!.key;
@@ -25,6 +26,8 @@ const FLEX_MAX: Record<GamePhase, number> = { early: 1, mid: 2, late: 3, vlate: 
 const TIER_CAP: Record<GamePhase, number> = { early: 2, mid: 3, late: 4, vlate: 4 };
 /** cheapest tier still worth a slot in each phase (an 800-soul item at 35 min is wasted space) */
 export const TIER_FLOOR: Record<GamePhase, number> = { early: 1, mid: 2, late: 3, vlate: 3 };
+/** an item must beat its tier's average on this hero by this much to be suggested from hero data alone */
+const HERO_DELTA_MIN = 0.01;
 const BULLET_PRIOR: Record<HeroType, number> = { marksman: 0.75, assassin: 0.65, brawler: 0.5, mystic: 0.3 };
 
 export type NeedKind = "anti_heal" | "bullet_resist" | "spirit_resist" | "cc_resist" | "lockdown" | "shred";
@@ -149,8 +152,8 @@ export function findNeeds(
   for (const it of myItems) for (const t of itemTags(it)) have.add(t);
   // resist only counts as answered with a real amount (side stats of 5–8% do not)
   const resist = (type: string) => sum(myItems.map((it) => itemInnate(it).get(type) ?? 0));
-  if (resist("MODIFIER_VALUE_BULLET_ARMOR_DAMAGE_RESIST") < 15) have.delete("bullet_resist");
-  if (resist("MODIFIER_VALUE_TECH_RESIST") < 15) have.delete("spirit_resist");
+  if (resist("MODIFIER_VALUE_BULLET_ARMOR_DAMAGE_RESIST") < NEED_TUNING.resistAnswered) have.delete("bullet_resist");
+  if (resist("MODIFIER_VALUE_TECH_RESIST") < NEED_TUNING.resistAnswered) have.delete("spirit_resist");
   const W = sum(profiles.map((p) => p.weight)) || 1;
   const out: Need[] = [];
   const names = (ps: EnemyProfile[]) => ps.map((p) => heroName(p.heroId)).join(", ");
@@ -169,7 +172,7 @@ export function findNeeds(
   }
 
   // defence follows the damage mix; only push it when one type clearly dominates
-  const side = dmg.bullet >= 0.6 ? "bullet_resist" : dmg.spirit >= 0.6 ? "spirit_resist" : null;
+  const side = dmg.bullet >= NEED_TUNING.damageDominance ? "bullet_resist" : dmg.spirit >= NEED_TUNING.damageDominance ? "spirit_resist" : null;
   if (side) {
     const share = side === "bullet_resist" ? dmg.bullet : dmg.spirit;
     const top = [...profiles].sort((a, b) => b.weight - a.weight).filter((p) => (side === "bullet_resist" ? p.bulletShare >= 0.55 : p.bulletShare <= 0.45));
@@ -279,7 +282,7 @@ function pickInTiers(need: Need, input: AdaptiveInput, exclude: Set<number>, flo
     let magnitude = 0;
     if (need.kind === "bullet_resist" || need.kind === "spirit_resist") {
       const v = itemInnate(it).get(need.kind === "bullet_resist" ? "MODIFIER_VALUE_BULLET_ARMOR_DAMAGE_RESIST" : "MODIFIER_VALUE_TECH_RESIST") ?? 0;
-      if (v < 12) continue;
+      if (v < NEED_TUNING.resistItemMin) continue;
       magnitude = v * 0.001; // 30% resist ≈ +3 WR points of preference
     }
     const c = counter.get(it.id);
@@ -333,14 +336,14 @@ export function adaptivePath(input: AdaptiveInput): { steps: AdaptiveStep[]; pha
   const taken = new Set<number>([...owned]);
   for (const need of input.needs) {
     if (flexLeft <= 0) break;
-    if (need.satisfied || need.urgency < 0.35) continue;
+    if (need.satisfied || need.urgency < NEED_TUNING.minUrgency) continue;
     const pick = pickForNeed(need, input, taken);
     if (!pick) continue;
     taken.add(pick.item.id);
     flexLeft--;
     const it = pick.item;
     flex.push({
-      urgent: need.urgency >= 0.6,
+      urgent: need.urgency >= NEED_TUNING.urgent,
       urgency: need.urgency,
       step: {
         itemId: it.id,
@@ -387,6 +390,32 @@ export function adaptivePath(input: AdaptiveInput): { steps: AdaptiveStep[]; pha
     }
   }
 
+  // core and counters are used up (typical very late with a full build): fall back to what
+  // this hero wins with in this phase's tiers, so the list does not run dry
+  if (steps.length < 3) {
+    const seen = new Set<number>([...owned, ...steps.map((s) => s.itemId)]);
+    const extra = [...lab.values()]
+      .filter((it) => it.type === "upgrade" && it.shopable && !it.disabled && !seen.has(it.id) && (it.cost ?? 0) > 0 && (it.item_tier ?? 9) <= TIER_CAP[phase] && (it.item_tier ?? 0) >= TIER_FLOOR[phase])
+      .map((it) => ({ it, d: input.heroItemDelta(it.id) ?? 0 }))
+      .filter((x) => x.d >= HERO_DELTA_MIN)
+      .sort((a, b) => b.d - a.d);
+    for (const { it, d } of extra) {
+      if (steps.length >= limit) break;
+      steps.push({
+        itemId: it.id,
+        name: it.name,
+        cost: it.cost ?? 0,
+        tier: it.item_tier ?? 0,
+        slot: it.item_slot_type ?? undefined,
+        kind: "core",
+        phase,
+        missing: 0,
+        affordable: false,
+        reason: `Kuat di hero kamu ${pts(d)} (data hero, bukan counter lineup)`,
+      });
+    }
+  }
+
   // ---- commitment: once an item has been the #1 call, keep it until it is bought,
   // unless its reason is gone or a clearly more urgent answer appears
   let switched: string | null = null;
@@ -398,7 +427,7 @@ export function adaptivePath(input: AdaptiveInput): { steps: AdaptiveStep[]; pha
       cs = { itemId: it.id, name: it.name, cost: it.cost ?? 0, tier: it.item_tier ?? 0, slot: it.item_slot_type ?? undefined, kind: "core", phase, missing: 0, affordable: false, reason: "Target sebelumnya" };
     }
     const needGone = cs?.needKind ? input.needs.some((n) => n.kind === cs!.needKind && n.satisfied) || !input.needs.some((n) => n.kind === cs!.needKind) : false;
-    const urgentFlex = flex.find((f) => f.step.itemId !== c.itemId && f.urgency >= 0.8);
+    const urgentFlex = flex.find((f) => f.step.itemId !== c.itemId && f.urgency >= NEED_TUNING.switchUrgency);
     const outgrown = (cs?.tier ?? 9) < Math.max(1, TIER_CAP[phase] - 1);
     if (!cs || needGone) {
       switched = cs ? `${cs.name} tidak lagi perlu (kebutuhannya sudah terjawab)` : null;
@@ -503,7 +532,7 @@ export function sellAdvice(input: {
 
   const byClass = new Map([...lab.values()].map((x) => [x.class_name, x]));
   const components = new Set(next.flatMap((st) => (lab.get(st.itemId)?.component_items ?? []).map((c) => byClass.get(c)?.id).filter((x): x is number => !!x)));
-  const openNeeds = new Set(needs.filter((n) => n.urgency >= 0.35).map((n) => n.kind));
+  const openNeeds = new Set(needs.filter((n) => n.urgency >= NEED_TUNING.minUrgency).map((n) => n.kind));
   const needTagsOf = (it: LabItem) => {
     const tags = itemTags(it);
     return (Object.entries(NEED_TAGS) as [NeedKind, ItemTag[]][]).filter(([k, ts]) => openNeeds.has(k) && ts.some((t) => tags.has(t))).map(([k]) => k);
@@ -544,4 +573,150 @@ export function sellAdvice(input: {
     slotsUsed: owned.length,
     capacity,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Full-build audit: when nothing is left to buy, is any owned item worth swapping?
+// ---------------------------------------------------------------------------
+
+export interface AuditSwap {
+  sellId: number;
+  sellName: string;
+  sellTier: number;
+  /** souls back (assumed 50%) */
+  refund: number;
+  buyId: number;
+  buyName: string;
+  buyTier: number;
+  buyCost: number;
+  slot: string;
+  /** value(new) − value(old), WR fractions */
+  gain: number;
+  affordable: boolean;
+  missing: number;
+  answers?: NeedKind;
+  reason: string;
+}
+
+export interface BuildAudit {
+  /** every category (and unlocked flex slot) is taken */
+  full: boolean;
+  slotsUsed: number;
+  capacity: number;
+  swaps: AuditSwap[];
+}
+
+/**
+ * Looks at the finished build instead of the shop: an owned item is a swap candidate only
+ * when the data says it is weak (vs this lineup and on this hero), and the replacement is
+ * the same category, the same tier or higher (never down-tier), inside the phase's tier
+ * range, and better by AUDIT_TUNING.margin. Items without any data are never suggested to
+ * be sold: absence of evidence is not evidence of weakness. Core items need a bigger gap.
+ */
+export function buildAudit(input: {
+  me: LivePlayer;
+  lab: Map<number, LabItem>;
+  gameTimeS: number;
+  /** counter scores of the current phase (shrunk win-rate edge vs this lineup) */
+  counter: CounterItem[];
+  heroItemDelta: (id: number) => number | null;
+  needs: Need[];
+  flexUnlocked: number;
+  /** next steps already on the buy list (their components stay) */
+  next?: AdaptiveStep[];
+  keepIds?: Set<number>;
+  coreIds?: Set<number>;
+}): BuildAudit {
+  const { me, lab } = input;
+  const phase = phaseAt(input.gameTimeS);
+  const owned = me.itemIds.map((id) => lab.get(id)).filter((x): x is LabItem => !!x && x.type === "upgrade");
+  const use = slotUsage(owned, input.flexUnlocked);
+  const cats = ["weapon", "vitality", "spirit"] as const;
+  const full = cats.every((c) => use.count[c] >= SLOTS_PER_CATEGORY) && use.flexFree === 0;
+  const capacity = SLOTS_PER_CATEGORY * 3 + use.flex;
+  const audit: BuildAudit = { full, slotsUsed: owned.length, capacity, swaps: [] };
+  if (!owned.length) return audit;
+
+  const lineup = new Map(input.counter.map((c) => [c.itemId, c]));
+  const value = (id: number) => {
+    const c = lineup.get(id)?.score;
+    const d = input.heroItemDelta(id);
+    return c == null && d == null ? null : (c ?? 0) + 0.5 * (d ?? 0);
+  };
+  const byClass = new Map([...lab.values()].map((x) => [x.class_name, x]));
+  const protectedIds = new Set<number>(input.keepIds ?? []);
+  for (const st of input.next ?? []) {
+    protectedIds.add(st.itemId);
+    for (const cls of lab.get(st.itemId)?.component_items ?? []) {
+      const comp = byClass.get(cls);
+      if (comp) protectedIds.add(comp.id);
+    }
+  }
+  const openNeeds = input.needs.filter((n) => n.urgency >= NEED_TUNING.minUrgency && !n.satisfied);
+  const answered = (it: LabItem): NeedKind | undefined => {
+    const tags = itemTags(it);
+    return openNeeds.find((n) => NEED_TAGS[n.kind].some((t) => tags.has(t)))?.kind;
+  };
+
+  const ownedIds = new Set(owned.map((o) => o.id));
+  const cap = TIER_CAP[phase];
+  const floor = TIER_FLOOR[phase];
+  const swaps: AuditSwap[] = [];
+  const usedBuy = new Set<number>();
+
+  // weakest owned items first
+  const olds = owned
+    .filter((o) => !protectedIds.has(o.id) && o.item_slot_type)
+    .map((o) => ({ o, v: value(o.id) }))
+    .filter((x): x is { o: LabItem; v: number } => x.v != null && x.v <= AUDIT_TUNING.weakBelow)
+    .sort((a, b) => a.v - b.v);
+
+  for (const { o, v } of olds) {
+    const isCore = !!input.coreIds?.has(o.id);
+    const need = AUDIT_TUNING.margin * (isCore ? AUDIT_TUNING.coreMarginFactor : 1);
+    let best: { it: LabItem; v: number } | null = null;
+    for (const c of input.counter) {
+      const it = lab.get(c.itemId);
+      if (!it || it.type !== "upgrade" || !it.shopable || it.disabled || !(it.cost ?? 0)) continue;
+      if (ownedIds.has(it.id) || usedBuy.has(it.id) || it.item_slot_type !== o.item_slot_type) continue;
+      const tier = it.item_tier ?? 0;
+      if (tier < Math.max(floor, o.item_tier ?? 0) || tier > cap) continue;
+      // an upgrade of the owned item itself is a normal buy, not a swap
+      if ((it.component_items ?? []).includes(o.class_name)) continue;
+      const nv = value(it.id);
+      if (nv == null || nv - v < need) continue;
+      if (!best || nv > best.v) best = { it, v: nv };
+    }
+    if (!best) continue;
+    usedBuy.add(best.it.id);
+    const refund = Math.round((o.cost ?? 0) * 0.5);
+    const buyCost = best.it.cost ?? 0;
+    const souls = me.souls ?? 0;
+    const affordable = souls + refund >= buyCost;
+    const lo = lineup.get(o.id)?.score;
+    const ho = input.heroItemDelta(o.id);
+    const ln = lineup.get(best.it.id)?.score;
+    const hn = input.heroItemDelta(best.it.id);
+    const part = (a: number | null | undefined, b: number | null | undefined) =>
+      [a != null && Math.abs(a) >= 0.003 ? `vs lineup ${pts(a)}` : "", b != null && Math.abs(b) >= 0.005 ? `di hero kamu ${pts(b)}` : ""].filter(Boolean).join(", ");
+    const ans = answered(best.it);
+    swaps.push({
+      sellId: o.id,
+      sellName: o.name,
+      sellTier: o.item_tier ?? 0,
+      refund,
+      buyId: best.it.id,
+      buyName: best.it.name,
+      buyTier: best.it.item_tier ?? 0,
+      buyCost,
+      slot: o.item_slot_type!,
+      gain: best.v - v,
+      affordable,
+      missing: affordable ? 0 : buyCost - refund - souls,
+      answers: ans,
+      reason: `Ganti ${o.name} (${part(lo, ho) || "lemah"}${isCore ? ", core tapi paling lemah di lineup ini" : ""}) dengan ${best.it.name} (${part(ln, hn) || "lebih kuat"})${ans ? `; juga menjawab ${NEED_LABEL[ans]}` : ""}. Refund ±${Math.round(refund / 100) / 10}k.`,
+    });
+  }
+  audit.swaps = swaps.sort((a, b) => b.gain - a.gain).slice(0, AUDIT_TUNING.maxSwaps);
+  return audit;
 }

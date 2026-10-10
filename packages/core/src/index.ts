@@ -16,7 +16,9 @@ export * from "./buildlab";
 /** Badge helpers: badge = tier * 10 + subrank (deadlock-api convention). */
 export const badgeTier = (badge: number) => Math.floor(badge / 10);
 export const badgeSubrank = (badge: number) => badge % 10;
+export * from "./tuning";
 export * from "./phaseplan";
+export * from "./robustness";
 export * from "./adaptive";
 export * from "./playbook";
 export * from "./macro";

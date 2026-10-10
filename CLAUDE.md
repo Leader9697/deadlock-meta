@@ -23,7 +23,13 @@ uses the **HUD widgets** in game; he rarely opens the main panel. Keep the HUD c
   late/vlate T3+, enforced in adaptivePath, pickForNeed, coach.buildPath and a final guard in
   `/api/live`.
 - Slots: 4 per category (weapon/vitality/spirit) + up to 4 flex. Sell advice is per category
-  (`sellAdvice`, `slotUsage`), never sells to fund a same/lower-tier item.
+  (`sellAdvice`, `slotUsage`), never sells to fund a same/lower-tier item. The full-build audit
+  (`buildAudit`, only when nothing is left to buy or every slot is taken) is the one place a
+  same-tier swap is allowed: same category, never down-tier, only when the data says the owned
+  item is weak AND the new one wins by ≥2 WR points (core items: ≥4). No data on the owned item
+  = never suggested.
+- Every hand-picked number (core score weights, need urgency cutoffs, audit margin) lives in
+  `packages/core/src/tuning.ts`. Change it there, not inside the modules.
 - Win probability shown is smoothed (EMA τ≈150 s, `smoothWin` in main.ts); server macro uses the
   smoothed value sent back as `winPSmooth`.
 - Match win/loss from history = `match_result === player_team` (`player_match_outcome` is not
@@ -42,13 +48,16 @@ uses the **HUD widgets** in game; he rarely opens the main panel. Keep the HUD c
 adaptive.ts (build path, needs, sell, tiers) · coach.ts (tips) · gameplan.ts (delay-proof plan from
 lineup strength per phase) · macro.ts (lane objective states; its farm/push calls are no longer
 shown) · imbue.ts (which ability to imbue + why, stat + build data) · spikes.ts · playbook.ts ·
-combo.ts · deathreview.ts · postmatch.ts · matchlog.ts (calibration) · phaseplan.ts · patchnotes.ts
+combo.ts · deathreview.ts · postmatch.ts · matchlog.ts (calibration) · phaseplan.ts · patchnotes.ts ·
+tuning.ts (all tunable numbers) · robustness.ts (is the core stable or noise?)
 
 ## Build / run
 - Dev: `npm install`, `npm run dev` (web :3000) + `npm run desktop` (overlay, tauri dev).
 - Local installer: `npm run desktop:build` → `target/release/bundle/nsis/*-setup.exe`.
 - Typecheck: `npx tsc --noEmit -p packages/core`, `-p apps/web`, `-p apps/desktop`;
   Rust: `cargo check -p deadlock-meta-desktop`, `cargo test -p deadlock-live`.
+- Tests: `npx tsx --test packages/core/test/build.test.ts` (audit, very-late fallback, robustness).
+- Core robustness on real data: `npx tsx scripts/core-robustness.mts --days 28` (needs the API).
 - Office PC needs a proxy: `[web_env] HTTPS_PROXY=...` in `%APPDATA%/id.faris.deadlockmeta/deadlock-live.toml`.
 
 ## Release / auto-update
@@ -61,6 +70,8 @@ combo.ts · deathreview.ts · postmatch.ts · matchlog.ts (calibration) · phase
 - The updater must be able to download release files without auth (public releases).
 
 ## Not verified on real data yet
+All values in `tuning.ts` (core weight 0.06/shrink 200, need urgency cutoffs, audit margin), run
+`scripts/core-robustness.mts` and the `/me` urgency bands before trusting them.
 Objective mask lane mapping, DeathReplayDataEvent presence, base slot count/refund 50%,
 lane-matchup endpoint stability, imbue target data from builds, console.log end-of-match line
 (would let the HUD hide instantly). Ask Faris for screenshots / console.log when touching these.

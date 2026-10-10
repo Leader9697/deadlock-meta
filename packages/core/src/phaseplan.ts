@@ -1,6 +1,7 @@
 import type { DeadlockClient, FetchInit, Query } from "./api";
 import { scoreCounterItems, type CounterItem } from "./counter";
 import { winrate } from "./stats";
+import { CORE_TUNING, type CoreTuning } from "./tuning";
 import type { Item, ItemFlowStats, ItemSlotType, ItemStats } from "./types";
 
 /**
@@ -269,13 +270,14 @@ const phaseOfSecond = (s: number): GamePhase => GAME_PHASES.find((p) => p.toS ==
  * Core build per phase. An item is a candidate only in its *modal* phase (where most
  * people buy it), ranked by popularity plus its net-worth-adjusted WR edge:
  *
- *   score = 0.06·√pickShare + (adjWR − baseWR)·n/(n+200)
+ *   score = pickWeight·√pickShare + (adjWR − baseWR)·n/(n+shrinkN)     (CORE_TUNING)
  *
  * so a near-universal core item (pick 60% → +0.046) still beats a niche item with a
  * lucky +3% WR on 80 matches (+0.009 shrunk), but between two common items the one
  * that wins more goes first.
  */
-export function flowPhasePlan(flow: ItemFlowStats, phaseSeconds: number, allItems: Item[] | Map<number, Item>): FlowPhasePlan {
+export function flowPhasePlan(flow: ItemFlowStats, phaseSeconds: number, allItems: Item[] | Map<number, Item>, tuning: Partial<CoreTuning> = {}): FlowPhasePlan {
+  const tn: CoreTuning = { ...CORE_TUNING, ...tuning };
   const items = allItems instanceof Map ? allItems : new Map(allItems.map((i) => [i.id, i]));
   const baselineWr = winrate(flow.summary.wins, flow.summary.matches);
   const players = flow.summary.players || flow.summary.matches || 1;
@@ -318,8 +320,8 @@ export function flowPhasePlan(flow: ItemFlowStats, phaseSeconds: number, allItem
       avgNetWorthAtBuy: a.nwNum / a.matches,
     };
     out[itemId] = fi;
-    if (a.matches < 30 || fi.pickShare < 0.03) continue;
-    const score = 0.06 * Math.sqrt(fi.pickShare) + (fi.adjustedWr - baselineWr) * (a.matches / (a.matches + 200));
+    if (a.matches < tn.minMatches || fi.pickShare < tn.minPickShare) continue;
+    const score = tn.pickWeight * Math.sqrt(fi.pickShare) + (fi.adjustedWr - baselineWr) * (a.matches / (a.matches + tn.shrinkN));
     const list = candidates.get(ph) ?? [];
     list.push({ itemId, score, cost: it.cost ?? 0, tier: it.item_tier ?? 0, slot: it.item_slot_type ?? null, matches: a.matches });
     candidates.set(ph, list);
