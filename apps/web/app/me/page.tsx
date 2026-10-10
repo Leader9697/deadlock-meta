@@ -4,6 +4,7 @@ import { RememberAccount } from "@/components/RememberAccount";
 import { Delta, EmptyState, HeroIcon, Panel, Pct } from "@/components/ui";
 import { getHeroMap, getHeroMeta, getMatchHistory, getPlayerHeroes } from "@/lib/data";
 import { AUTO } from "@/lib/filters";
+import { loadHabits } from "@/lib/habits";
 import { listMatchLogs } from "@/lib/store";
 
 export const dynamic = "force-dynamic";
@@ -16,6 +17,9 @@ function parseAccount(v: string | string[] | undefined): number | null {
   const acc = n > STEAM64_BASE ? n - STEAM64_BASE : n;
   return acc > 0n && acc < 2n ** 32n ? Number(acc) : null;
 }
+
+const k = (n: number) => `${(n / 1000).toFixed(1)}k`;
+const clock = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 
 const TIP_LABEL: Record<string, string> = {
   push: "Push",
@@ -66,6 +70,7 @@ export default async function MePage({ searchParams }: { searchParams: Promise<R
     getHeroMap(),
     listMatchLogs(account),
   ]);
+  const hb = await loadHabits(account, logs).catch(() => null);
   const recent = [...hist].sort((a, b) => b.start_time - a.start_time);
   const tilt = tiltCheck(recent.map((m) => m.match_result === m.player_team));
   const globalWr = new Map(meta.map((m) => [m.heroId, m.winrate]));
@@ -170,6 +175,106 @@ export default async function MePage({ searchParams }: { searchParams: Promise<R
           ) : null}
         </Panel>
       </div>
+
+      <Panel title="Kebiasaan lintas match" right={<span className="text-xs text-muted">dari log overlay di PC ini</span>}>
+        {!hb || hb.habits.matches === 0 ? (
+          <EmptyState>Belum ada match dengan log overlay sampai menit 10. Main dengan overlay aktif; tiap match otomatis tersimpan.</EmptyState>
+        ) : (
+          <div className="space-y-4">
+            <div className="grid gap-4 sm:grid-cols-3">
+              <div className="rounded-lg border border-line bg-panel-2/40 px-3 py-2">
+                <div className="text-xs uppercase text-muted">Mati sebelum 10:00</div>
+                <div className="num text-2xl font-semibold">{hb.habits.deaths10.avg != null ? hb.habits.deaths10.avg.toFixed(1) : "–"}</div>
+                <div className="text-xs text-muted">rata-rata per match{hb.habits.deaths10.worst != null ? ` · terburuk ${hb.habits.deaths10.worst}×` : ""}</div>
+              </div>
+              <div className="rounded-lg border border-line bg-panel-2/40 px-3 py-2">
+                <div className="text-xs uppercase text-muted">Souls di 10:00</div>
+                <div className="num text-2xl font-semibold">{hb.habits.souls10.avg != null ? k(hb.habits.souls10.avg) : "–"}</div>
+                <div className="text-xs text-muted">
+                  {hb.habits.souls10.bench != null ? `rata-rata hero ${k(hb.habits.souls10.bench)}` : "rata-rata hero belum tersedia"}
+                  {hb.habits.souls10.deltaPct != null ? (
+                    <>
+                      {" · "}
+                      <Delta value={hb.habits.souls10.deltaPct} />
+                    </>
+                  ) : null}
+                </div>
+              </div>
+              <div className="rounded-lg border border-line bg-panel-2/40 px-3 py-2">
+                <div className="text-xs uppercase text-muted">Match dipakai</div>
+                <div className="num text-2xl font-semibold">{hb.habits.matches}</div>
+                <div className="text-xs text-muted">log yang sampai menit 10</div>
+              </div>
+            </div>
+
+            <div className="grid items-start gap-6 lg:grid-cols-2">
+              <div>
+                <h3 className="mb-2 text-xs font-semibold uppercase text-muted">Item yang langganan telat</h3>
+                {hb.habits.lateItems.length ? (
+                  <ul className="space-y-1 text-sm">
+                    {hb.habits.lateItems.map((it) => (
+                      <li key={it.itemId} className="flex items-center gap-2">
+                        <span className="min-w-0 flex-1 truncate">{it.name}</span>
+                        <span className="text-xs text-muted num">
+                          kamu {clock(it.mineS)} vs {clock(it.benchS)}
+                        </span>
+                        <span className="w-16 text-right text-xs text-loss num">+{clock(it.deltaS)}</span>
+                        <span className="w-12 text-right text-xs text-muted num">{it.matches}×</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <EmptyState>Tidak ada item yang telat &gt;2 menit dari rata-rata. Timing belanja kamu wajar.</EmptyState>
+                )}
+              </div>
+              <div>
+                <h3 className="mb-2 text-xs font-semibold uppercase text-muted">Per hero</h3>
+                <ul className="space-y-1 text-sm">
+                  {hb.habits.perHero.map((h) => (
+                    <li key={h.heroId} className="flex items-center gap-2">
+                      <HeroIcon hero={heroes.get(h.heroId)} size={24} />
+                      <span className="min-w-0 flex-1 truncate">{heroes.get(h.heroId)?.name ?? `#${h.heroId}`}</span>
+                      <span className="text-xs text-muted num">{h.matches} match</span>
+                      <span className="w-20 text-right text-xs num">{h.souls10 != null ? k(h.souls10) : "–"}</span>
+                      <span className="w-20 text-right text-xs text-muted num">{h.bench != null ? `/ ${k(h.bench)}` : ""}</span>
+                      <span className="w-14 text-right text-xs num">{h.deaths10 != null ? `${h.deaths10.toFixed(1)}✝` : ""}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+
+            {hb.matches.length ? (
+              <details className="text-sm">
+                <summary className="cursor-pointer text-xs text-muted">Per match ({hb.matches.length})</summary>
+                <ul className="mt-2 divide-y divide-line/60">
+                  {hb.matches.slice(0, 20).map((m) => (
+                    <li key={m.matchId} className="flex items-center gap-2 py-1">
+                      <HeroIcon hero={heroes.get(m.heroId)} size={22} />
+                      <Link href={`/me/match/${m.matchId}?account=${account}`} className="min-w-0 flex-1 truncate hover:text-brass" prefetch={false}>
+                        {heroes.get(m.heroId)?.name ?? `#${m.heroId}`}
+                      </Link>
+                      <span className="w-20 text-right text-xs num">{m.souls10 != null ? k(m.souls10) : "–"}</span>
+                      <span className="w-14 text-right text-xs num">{m.deaths10 != null ? `${m.deaths10}✝` : "–"}</span>
+                      <span className="w-24 text-right text-[11px] text-muted">
+                        {new Date(m.startedAt).toLocaleDateString("id-ID", { day: "numeric", month: "short" })}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            ) : null}
+
+            {hb.habits.notes.length ? (
+              <div className="space-y-1 text-xs text-muted">
+                {hb.habits.notes.map((n, i) => (
+                  <p key={i}>{n}</p>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        )}
+      </Panel>
 
       <Panel title="Kalibrasi overlay" right={<span className="text-xs text-muted">dari log overlay di PC ini</span>}>
         {cal.finished === 0 ? (

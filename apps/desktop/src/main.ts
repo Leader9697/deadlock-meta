@@ -477,6 +477,7 @@ function recordSnapshot(r: LiveResp, m: LiveState["players"][number]) {
       needs: (r.needs ?? []).map((n) => ({ kind: n.kind, satisfied: n.satisfied })),
       items: [...m.itemIds],
       deaths: m.deaths,
+      nw: m.netWorth,
     });
   }
   log.updatedAt = Date.now();
@@ -745,6 +746,8 @@ function abilityCard(r: LiveResp) {
 interface Summary {
   tilt: { warning: string | null; last10: { wins: number; games: number }; streak: number; streakKind: string | null };
   best: { heroId: number; name?: string; matches: number; winrate: number; edge: number }[];
+  /** cross-match habits from the overlay logs on this PC (pre-game only) */
+  habits?: { matches: number; hudLines: string[]; notes: string[] } | null;
 }
 let summary: Summary | null = null;
 let summaryAt = 0;
@@ -761,8 +764,14 @@ async function loadSummary() {
 }
 function summaryCard() {
   void loadSummary();
-  if (!summary || !summary.best.length) return "";
-  return `<section class="card"><h3>Hero terbaikmu</h3>
+  if (!summary || (!summary.best.length && !summary.habits?.hudLines.length)) return "";
+  const hb = summary.habits;
+  const habitsBlock = hb?.hudLines.length
+    ? `<div class="small" style="margin-bottom:6px">${hb.hudLines.map((l) => `<div>${esc(l)}</div>`).join("")}${hb.notes
+        .map((n) => `<div class="muted" style="margin-top:2px">${esc(n)}</div>`)
+        .join("")}</div>`
+    : "";
+  return `<section class="card"><h3>Kebiasaan & hero terbaikmu <small>${hb ? `${hb.matches} match log` : ""}</small></h3>${habitsBlock}
     ${
       summary.best.length
         ? `<div class="small muted">Hero terbaikmu:</div>${summary.best
@@ -1049,6 +1058,8 @@ interface HudExtra {
   winTrend: number | null;
   souls: number | null;
   team: boolean;
+  /** 1–2 pre-game habit lines (HUD Situasi before the match starts) */
+  habits: string[];
 }
 interface OverlayData {
   hud: HudExtra;
@@ -1061,7 +1072,7 @@ interface OverlayData {
 }
 let lastBroadcast = "";
 function broadcast(force = false) {
-  const hud: HudExtra = { focus: S.focus, toast: S.toast, pending: S.pending.map((p) => p.name), lag: S.live ? lagSeconds() : BASE_DELAY, winTrend: winTrend(), team: Date.now() < S.teamUntil, souls: (() => {
+  const hud: HudExtra = { focus: S.focus, toast: S.toast, pending: S.pending.map((p) => p.name), lag: S.live ? lagSeconds() : BASE_DELAY, winTrend: winTrend(), team: Date.now() < S.teamUntil, habits: summary?.habits?.hudLines ?? [], souls: (() => {
     const m = me();
     return m ? soulsNow(m) : null;
   })() };
@@ -1225,8 +1236,20 @@ document.addEventListener("change", (e) => {
 const WIDGET = new URLSearchParams(location.search).get("widget");
 let editing = false;
 
-let HUD: HudExtra = { focus: false, toast: "", pending: [], lag: BASE_DELAY, winTrend: null, souls: null, team: false };
+let HUD: HudExtra = { focus: false, toast: "", pending: [], lag: BASE_DELAY, winTrend: null, souls: null, team: false, habits: [] };
 const LANE_ARROW: Record<string, string> = { "kita tekan": "▲", "kita ditekan": "▼" };
+
+/**
+ * HUD "Situasi" before the match: the cross-match habits (deaths before 10:00, souls at
+ * 10:00 vs the hero average, items always bought late) in 1–2 lines. Replaced by the live
+ * situation as soon as the match data arrives.
+ */
+function habitsHud(lines: string[]) {
+  if (!lines.length) return "";
+  return `<section class="card hud situasi"><h3>Kebiasaan <small>sebelum match</small></h3>${lines
+    .map((l) => `<div class="hud-line">${esc(l)}</div>`)
+    .join("")}</section>`;
+}
 
 /** HUD "Situasi": win chance (smoothed) + economy + power spike + the macro plan, in ~6 lines. */
 function situasiHud(r: LiveResp) {
@@ -1341,6 +1364,8 @@ function renderWidget() {
     }
   } else if (WIDGET === "coach" && HUD.toast) {
     html = `<div class="hud-toast">${esc(HUD.toast)}</div>`;
+  } else if (WIDGET === "win" && !HUD.focus) {
+    html = habitsHud(HUD.habits);
   }
   if (editing) {
     const NAME: Record<string, string> = { coach: "HUD Coach", win: "HUD Situasi", buy: "HUD Beli", enemies: "HUD Lawan" };

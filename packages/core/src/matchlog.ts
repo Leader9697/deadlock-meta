@@ -19,6 +19,8 @@ export interface LogSnapshot {
   /** my items at this moment */
   items: number[];
   deaths: number;
+  /** my net worth (souls earned), for the cross-match habits */
+  nw?: number;
 }
 
 export interface MatchLog {

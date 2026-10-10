@@ -42,7 +42,8 @@ uses the **HUD widgets** in game; he rarely opens the main panel. Keep the HUD c
 adaptive.ts (build path, needs, sell, tiers) · coach.ts (tips) · gameplan.ts (delay-proof plan from
 lineup strength per phase) · macro.ts (lane objective states; its farm/push calls are no longer
 shown) · imbue.ts (which ability to imbue + why, stat + build data) · spikes.ts · playbook.ts ·
-combo.ts · deathreview.ts · postmatch.ts · matchlog.ts (calibration) · phaseplan.ts · patchnotes.ts
+combo.ts · deathreview.ts · postmatch.ts · matchlog.ts (calibration) · habits.ts (cross-match
+habits: deaths before 10:00, souls at 10:00 vs hero average, items always bought late) · phaseplan.ts · patchnotes.ts
 
 ## Build / run
 - Dev: `npm install`, `npm run dev` (web :3000) + `npm run desktop` (overlay, tauri dev).
@@ -66,8 +67,10 @@ lane-matchup endpoint stability, imbue target data from builds, console.log end-
 (would let the HUD hide instantly). Ask Faris for screenshots / console.log when touching these.
 
 ## Ideas queued (Faris agreed on direction)
-1. Cross-match habits summary (deaths before 10:00, souls at 10 vs hero average, late items) from
-   the match logs in `DLM_DATA_DIR`.
+1. ~~Cross-match habits summary~~ — **done (v0.3.0)**: `habits.ts` over the logs in `DLM_DATA_DIR`,
+   1–2 lines in HUD Situasi before the match (`HudExtra.habits`, from `/api/me/summary`) and the
+   full breakdown in the "Kebiasaan lintas match" panel on web `/me` (`apps/web/lib/habits.ts`).
+   Souls at 10:00 needs `LogSnapshot.nw`, recorded from v0.3.0 on, so older logs show "–".
 2. Laning souls target per minute as one HUD number.
 3. Draft help in the overlay during hero pick.
 4. Calibrate weights after ~20 real matches (`/me` calibration).

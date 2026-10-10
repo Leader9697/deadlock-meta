@@ -24,6 +24,7 @@ export * from "./gameplan";
 export * from "./deathreview";
 export * from "./patchnotes";
 export * from "./matchlog";
+export * from "./habits";
 export * from "./postmatch";
 export * from "./spikes";
 export * from "./combo";
