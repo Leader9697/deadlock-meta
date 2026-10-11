@@ -301,6 +301,14 @@ impl Aggregator {
             if let Some(mb) = num(row.get("mid_boss_at")) {
                 self.mid_boss_at = Some(mb).filter(|x| *x > 0.0);
             }
+            if let Some(gm) = num(row.get("game_mode")).map(|v| v as u8) {
+                let mode = if gm == 4 { "brawl" } else { "normal" };
+                self.state.game_mode = Some(mode.to_string());
+            }
+            if let Some(mm) = num(row.get("match_mode")).map(|v| v as u8) {
+                let mode = if mm == 4 { "ranked" } else { "unranked" };
+                self.state.match_mode = Some(mode.to_string());
+            }
             if let (Some(c), Some(at)) = (num(row.get("clock_s")), num(row.get("clock_tick"))) {
                 self.clock_anchor = Some((c, at as i64));
             }
@@ -439,6 +447,9 @@ impl Aggregator {
             let ids = self.state.player_mut(account).item_ids.clone();
             let times = self.times_for(slot, &ids);
             self.state.player_mut(account).item_times = times;
+        }
+        if self.state.game_mode.is_none() && self.state.players.len() >= 2 {
+            self.state.game_mode = Some(if self.state.players.len() <= 8 { "brawl" } else { "normal" }.into());
         }
         true
     }

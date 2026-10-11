@@ -154,7 +154,9 @@ WHERE "m_steamID" > 0"#,
   "m_pGameRules__m_nMatchClockUpdateTick"    AS clock_tick,
   "m_pGameRules__m_flGameStartTime"          AS game_start_s,
   "m_pGameRules__m_nTotalPausedTicks"        AS paused_ticks,
-  "m_pGameRules__m_tNextMidBossSpawnTime"    AS mid_boss_at
+  "m_pGameRules__m_tNextMidBossSpawnTime"    AS mid_boss_at,
+  "m_pGameRules__m_eGameMode"                AS game_mode,
+  "m_pGameRules__m_eMatchMode"               AS match_mode
 FROM CCitadelGameRulesProxy"#,
                 ),
                 // userid on game events is the player slot (= controller entity_index - 1).
@@ -192,7 +194,8 @@ FROM ObjectiveMaskEvent",
 /// v6: lane, hero damage and healing per player (adaptive coach).
 /// v7: killfeed + death recap, hero pawn index.
 /// v8: flex slot unlocks.
-pub const CONFIG_VERSION: u32 = 8;
+/// v9: game_mode and match_mode detection (street brawl vs normal / ranked).
+pub const CONFIG_VERSION: u32 = 9;
 
 impl Config {
     /// Older config files keep the user's own settings but get the current built-in

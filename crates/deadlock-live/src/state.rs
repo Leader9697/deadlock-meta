@@ -59,6 +59,12 @@ pub struct LiveState {
     /// Unlocked flex item slots per team [Amber, Sapphire].
     #[serde(skip_serializing_if = "Option::is_none")]
     pub flex_slots: Option<[u8; 2]>,
+    /// Detected game mode ("normal" | "brawl").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub game_mode: Option<String>,
+    /// Match type ("unranked" | "ranked").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub match_mode: Option<String>,
 }
 
 /// One damage source in a death recap.

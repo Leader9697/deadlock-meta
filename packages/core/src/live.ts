@@ -42,6 +42,32 @@ export interface LiveState {
   myDeaths?: DeathRecord[];
   /** unlocked flex item slots per team [Amber, Sapphire] */
   flexSlots?: [number, number];
+  /** detected mode: "normal" (6v6) | "brawl" (4v4) */
+  gameMode?: "normal" | "brawl";
+  /** "unranked" | "ranked" */
+  matchMode?: "unranked" | "ranked";
+}
+
+export type GameMode = "normal" | "brawl";
+export type MatchMode = "unranked" | "ranked";
+
+export interface ModeInfo {
+  gameMode: GameMode;
+  matchMode: MatchMode;
+  isBrawl: boolean;
+  isRanked: boolean;
+  label: string;
+}
+
+export function detectMode(state: LiveState): ModeInfo {
+  const isBrawl =
+    state.gameMode === "brawl" ||
+    (state.players.length >= 2 && state.players.length <= 8);
+  const isRanked = state.matchMode === "ranked";
+  const gameMode: GameMode = isBrawl ? "brawl" : "normal";
+  const matchMode: MatchMode = isRanked ? "ranked" : "unranked";
+  const label = isBrawl ? "Street Brawl (4v4)" : isRanked ? "Ranked (6v6)" : "Unranked (6v6)";
+  return { gameMode, matchMode, isBrawl, isRanked, label };
 }
 
 export interface LiveSummary {

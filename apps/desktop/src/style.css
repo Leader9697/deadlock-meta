@@ -403,3 +403,51 @@ html.widget .coach { background: color-mix(in srgb, var(--c) 14%, rgb(13 12 10 /
   border: 1px solid var(--line);
 }
 
+/* ---------- Visual Hero Picker Grid ---------- */
+.hero-avatar-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(52px, 1fr));
+  gap: 5px;
+  max-height: 165px;
+  overflow-y: auto;
+  padding: 5px;
+  background: var(--panel2);
+  border-radius: 8px;
+  border: 1px solid var(--line);
+}
+.hero-avatar-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 3px 2px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+.hero-avatar-btn:hover {
+  background: rgb(216 164 65 / 0.15);
+  border-color: var(--brass);
+}
+.hero-avatar-btn.selected {
+  background: rgb(216 164 65 / 0.25);
+  border-color: var(--brass);
+  box-shadow: 0 0 6px rgb(216 164 65 / 0.4);
+}
+.hero-avatar-btn .ico {
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+}
+.hero-avatar-label {
+  font-size: 9px;
+  color: var(--fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 48px;
+  text-align: center;
+}
+

@@ -37,7 +37,7 @@ interface Diag {
 }
 
 /** shown in the header so it is obvious which build is running */
-let APP_BUILD = "v0.3.4"; // replaced by the real app version at start
+let APP_BUILD = "v0.3.5"; // replaced by the real app version at start
 
 interface Settings {
   siteBase: string;
@@ -93,6 +93,7 @@ interface LiveResp {
   partner?: { heroId: number; name: string; delta: number; why: string } | null;
   sell?: { sellId: number; sellName: string; refund: number; forId: number; forName: string; reason: string; slotsUsed: number; capacity: number } | null;
   switched?: string | null;
+  mode?: { gameMode: "normal" | "brawl"; matchMode: "unranked" | "ranked"; isBrawl: boolean; isRanked: boolean; label: string };
 }
 type PathStep = BuildStep & { locked?: boolean; upgradeFrom?: number; fullCost?: number };
 type Phase = "early" | "mid" | "late" | "vlate";
@@ -586,7 +587,12 @@ function renderStatus() {
   let html: string;
   if (S.connected && S.live) {
     const stale = staleSeconds();
-    html = `<b>LIVE</b> #${S.matchId ?? "?"} · ${formatClock(S.live.gameTimeS)} <span class="small">· di game ±${formatClock(S.live.gameTimeS + lagSeconds())} · telat ${lagSeconds()} dtk</span>${lagSeconds() >= 150 ? ` <span class="stale">⚠ broadcast tertinggal ${Math.round(lagSeconds() / 60)} mnt: tekan ✓ Sudah beli setelah belanja</span>` : ""}${
+    const modeBadge = S.liveResp?.mode
+      ? ` <span class="tag ${S.liveResp.mode.isBrawl ? "hot" : S.liveResp.mode.isRanked ? "main" : "ok"}">${esc(S.liveResp.mode.label)}</span>`
+      : S.live.players.length > 0 && S.live.players.length <= 8
+        ? ` <span class="tag hot">Brawl 4v4</span>`
+        : "";
+    html = `<b>LIVE</b> #${S.matchId ?? "?"}${modeBadge} · ${formatClock(S.live.gameTimeS)} <span class="small">· di game ±${formatClock(S.live.gameTimeS + lagSeconds())} · telat ${lagSeconds()} dtk</span>${lagSeconds() >= 150 ? ` <span class="stale">⚠ broadcast tertinggal ${Math.round(lagSeconds() / 60)} mnt: tekan ✓ Sudah beli setelah belanja</span>` : ""}${
       stale >= 30 ? ` <span class="stale">⚠ data berhenti ${stale} dtk, saran bisa basi</span>` : ""
     }`;
   } else if (S.matchId) {
@@ -1125,10 +1131,21 @@ function heroPickCard() {
   const heroes = [...S.heroes.values()].sort((a, b) => a.name.localeCompare(b.name));
   const selected = S.heroes.get(S.pregameHero ?? 0);
   return `<section class="card">
-    <h3>Pilih hero sebelum main <small>pelajari build & power spike</small></h3>
-    <div class="row">
+    <h3>Pilih hero sebelum main <small>klik avatar atau pilih dropdown</small></h3>
+    <div class="hero-avatar-strip">
+      ${heroes
+        .map(
+          (h) => `
+        <button class="hero-avatar-btn ${h.heroId === S.pregameHero ? "selected" : ""}" data-hero-pick="${h.heroId}" title="${esc(h.name)} · WR ${pct(h.winrate, 0)} (Tier ${h.tier})">
+          ${heroIcon(h.heroId, "ico")}
+          <span class="hero-avatar-label">${esc(h.name)}</span>
+        </button>`,
+        )
+        .join("")}
+    </div>
+    <div class="row" style="margin-top:8px">
       ${selected ? heroIcon(selected.heroId, "ico") : `<span class="ico" style="display:grid;place-items:center;color:var(--muted)">🎮</span>`}
-      <select id="heroSel" style="flex:1"><option value="">Pilih hero untuk lihat build & panduan…</option>
+      <select id="heroSel" style="flex:1"><option value="">Pilih / cari hero dari daftar…</option>
         ${heroes.map((h) => `<option value="${h.heroId}" ${h.heroId === S.pregameHero ? "selected" : ""}>${esc(h.name)} (WR ${pct(h.winrate, 0)} · Tier ${h.tier})</option>`).join("")}</select>
     </div>
   </section>`;
@@ -1245,6 +1262,16 @@ document.addEventListener("click", async (e) => {
       copy.classList.remove("ok");
       copy.textContent = prev;
     }, 1200);
+    return;
+  }
+  const heroPick = t.closest<HTMLElement>("[data-hero-pick]");
+  if (heroPick) {
+    const id = Number(heroPick.dataset.heroPick);
+    if (id) {
+      S.pregameHero = id;
+      void loadHero(id);
+      render();
+    }
     return;
   }
   const tab = t.closest<HTMLElement>("[data-tab]");
@@ -1369,13 +1396,17 @@ function situasiHud(r: LiveResp) {
       ? `<div class="hud-line ${sp.verdict === "fight" ? "win" : "loss"}">⚡ ${sp.verdict === "fight" ? "Spike tim kamu" : "Spike lawan"}: <b>${sp.verdict === "fight" ? "cari fight" : "tahan fight"}</b> sampai ${sp.untilClock ?? `±${Math.round(sp.windowLeft)}s`}</div>`
       : "";
   const mc = r.macro;
-  const lanes = mc?.lanes.length
-    ? `<div class="hud-lanes">${mc.lanes
-        .map((l) => `<span class="${l.status === "kita tekan" ? "win" : l.status === "kita ditekan" ? "loss" : "muted"}${mc.lane?.color === l.color ? " focus" : ""}">${esc(l.name)} ${LANE_ARROW[l.status] ?? "="}</span>`)
-        .join("")}</div>`
-    : "";
+  const isBrawl = !!(r.mode?.isBrawl || (S.live && S.live.players.length <= 8));
+  const lanes = isBrawl
+    ? `<div class="hud-line win">🥊 <b>Street Brawl 4v4</b> · Draft 3 item acak di awal ronde</div>`
+    : mc?.lanes.length
+      ? `<div class="hud-lanes">${mc.lanes
+          .map((l) => `<span class="${l.status === "kita tekan" ? "win" : l.status === "kita ditekan" ? "loss" : "muted"}${mc.lane?.color === l.color ? " focus" : ""}">${esc(l.name)} ${LANE_ARROW[l.status] ?? "="}</span>`)
+          .join("")}</div>`
+      : "";
+  const modeTag = r.mode ? ` <span class="tag ${r.mode.isBrawl ? "hot" : r.mode.isRanked ? "main" : "ok"}">${esc(r.mode.label)}</span>` : "";
   return `<section class="card hud situasi">
-    <div class="row" style="justify-content:space-between"><span>${p != null ? `Menang <b class="hud-big ${p >= 0.5 ? "win" : "loss"}">${pct(p, 0)}</b> <span class="small">${winBand(p)}${trend}</span>` : `<b>Ekonomi</b>`}</span><span class="small ${r.netWorthLead >= 0 ? "win" : "loss"}">${r.netWorthLead >= 0 ? "+" : "−"}${k(Math.abs(r.netWorthLead))}</span></div>
+    <div class="row" style="justify-content:space-between"><span>${p != null ? `Menang <b class="hud-big ${p >= 0.5 ? "win" : "loss"}">${pct(p, 0)}</b> <span class="small">${winBand(p)}${trend}</span>` : `<b>Ekonomi</b>`}${modeTag}</span><span class="small ${r.netWorthLead >= 0 ? "win" : "loss"}">${r.netWorthLead >= 0 ? "+" : "−"}${k(Math.abs(r.netWorthLead))}</span></div>
     <div class="nw" style="margin:4px 0"><div class="a" style="width:${share}%"></div><div class="b" style="width:${100 - share}%"></div></div>
     ${spike}
     ${r.gamePlan ? `<div class="hud-line">🎯 <b>${esc(r.gamePlan.title)}</b></div>` : ""}

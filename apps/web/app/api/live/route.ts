@@ -390,8 +390,28 @@ export async function POST(req: NextRequest) {
       };
     });
 
+  const isBrawl = (state.players.length > 0 && state.players.length <= 8) || state.gameMode === "brawl";
+  const isRanked = state.matchMode === "ranked";
+  const modeInfo = {
+    gameMode: isBrawl ? ("brawl" as const) : ("normal" as const),
+    matchMode: isRanked ? ("ranked" as const) : ("unranked" as const),
+    isBrawl,
+    isRanked,
+    label: isBrawl ? "Brawl 4v4" : isRanked ? "Ranked 6v6" : "Unranked 6v6",
+  };
+
+  if (isBrawl && state.winningTeam === undefined) {
+    out.tips.unshift({
+      kind: "objective",
+      priority: 88,
+      title: "Street Brawl 4v4 (Draft Ronde)",
+      detail: "Toko nonaktif. Saat ronde memberi 3 kartu acak, prioritaskan item counter terkuat & anti-heal vs 4 musuh.",
+    });
+  }
+
   return NextResponse.json({
     gameTimeS: state.gameTimeS,
+    mode: modeInfo,
     teamNetWorth: summary.teamNetWorth,
     netWorthLead: summary.netWorthLead,
     winProbability: winRaw,
