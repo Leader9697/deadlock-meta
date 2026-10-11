@@ -725,3 +725,230 @@ html.widget .coach { background: color-mix(in srgb, var(--c) 14%, rgb(13 12 10 /
   .home-grid { grid-template-columns: 1fr; }
 }
 
+/* ---------- Omnisearch Header Component ---------- */
+.omnisearch-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  background: rgba(14, 18, 27, 0.75);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 4px 10px;
+  min-width: 220px;
+  max-width: 320px;
+  transition: all .15s ease;
+  margin-left: 8px;
+}
+.omnisearch-wrap:focus-within {
+  border-color: var(--brass);
+  background: rgba(20, 26, 38, 0.95);
+  box-shadow: 0 0 12px rgba(229, 179, 88, 0.2);
+}
+.omnisearch-icon {
+  font-size: 13px;
+  opacity: .6;
+  margin-right: 8px;
+  user-select: none;
+}
+.omnisearch-input {
+  background: none;
+  border: none;
+  outline: none;
+  color: var(--fg);
+  font: 500 12px var(--sans);
+  width: 100%;
+}
+.omnisearch-input::placeholder {
+  color: var(--fg-muted);
+  opacity: .7;
+}
+.omnisearch-kbd {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--panel2);
+  border: 1px solid var(--line);
+  color: var(--fg-muted);
+  user-select: none;
+}
+.omnisearch-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  width: 100%;
+  max-height: 380px;
+  overflow-y: auto;
+  background: rgba(13, 16, 24, 0.98);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(0,0,0,0.7);
+  z-index: 1000;
+  padding: 6px;
+  backdrop-filter: blur(12px);
+}
+.omni-section-title {
+  font: 700 11px "Barlow Condensed", sans-serif;
+  letter-spacing: .08em;
+  color: var(--brass);
+  padding: 6px 8px 4px;
+  text-transform: uppercase;
+}
+.omni-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background .12s ease;
+}
+.omni-item:hover {
+  background: rgba(229, 179, 88, 0.12);
+}
+.omni-item .ico {
+  width: 26px;
+  height: 26px;
+  border-radius: 4px;
+}
+.omni-item-info {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+.omni-item-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.omni-item-sub {
+  font-size: 11px;
+  color: var(--fg-muted);
+}
+
+/* ---------- Steam Profile Badge ---------- */
+.steam-profile-pill {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 10px 3px 4px;
+  background: rgba(20, 24, 36, 0.65);
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  font-size: 11px;
+  color: var(--fg);
+  max-width: 180px;
+  cursor: pointer;
+}
+.steam-avatar-thumb {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 1px solid var(--brass);
+}
+.steam-profile-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.steam-profile-online {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--win);
+  box-shadow: 0 0 6px var(--win);
+}
+
+/* ---------- Match History Cards ---------- */
+.match-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  transition: all .15s ease;
+}
+.match-card:hover {
+  border-color: var(--line-light);
+  transform: translateY(-1px);
+}
+.match-card.win {
+  border-left: 4px solid var(--win);
+}
+.match-card.loss {
+  border-left: 4px solid var(--loss);
+}
+.match-badge-outcome {
+  font: 800 12px "Barlow Condensed", sans-serif;
+  letter-spacing: .06em;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+.match-badge-outcome.win {
+  background: rgba(69, 219, 143, 0.15);
+  color: var(--win);
+}
+.match-badge-outcome.loss {
+  background: rgba(247, 85, 107, 0.15);
+  color: var(--loss);
+}
+.match-card-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.match-card-stats {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+.match-kda {
+  font-weight: 700;
+  font-size: 13px;
+}
+.match-card-meta {
+  display: flex;
+  flex-direction: column;
+  text-align: right;
+  gap: 2px;
+}
+.player-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 20px;
+  background: linear-gradient(135deg, rgba(20, 26, 42, 0.95) 0%, rgba(13, 16, 24, 0.98) 100%);
+  border: 1px solid var(--brass);
+  border-radius: 10px;
+  margin-bottom: 14px;
+}
+.player-banner-avatar {
+  width: 58px;
+  height: 58px;
+  border-radius: 50%;
+  border: 2px solid var(--brass);
+  box-shadow: 0 0 14px rgba(229, 179, 88, 0.25);
+  object-fit: cover;
+}
+.player-banner-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.player-banner-name {
+  font: 800 20px "Barlow Condensed", sans-serif;
+  letter-spacing: .04em;
+  color: #fff;
+}
+.player-banner-id {
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+

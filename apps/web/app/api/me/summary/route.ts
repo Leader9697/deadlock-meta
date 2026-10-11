@@ -27,5 +27,6 @@ export async function GET(req: NextRequest) {
     tilt: tiltCheck(outcomes),
     best,
     habits: hb ? { matches: hb.habits.matches, hudLines: hb.habits.hudLines, notes: hb.habits.notes } : null,
+    matches: [...hist].sort((a, b) => b.start_time - a.start_time).slice(0, 10),
   });
 }

@@ -157,20 +157,92 @@ pub fn steam_dir() -> Option<PathBuf> {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SteamProfile {
+    pub account_id: u32,
+    pub steam64: String,
+    pub persona_name: String,
+    pub account_name: String,
+    pub avatar_url: Option<String>,
+}
+
 /// The account flagged `MostRecent` in config/loginusers.vdf, as a 32-bit account id.
 pub fn most_recent_account(loginusers: &str) -> Option<u32> {
+    most_recent_profile(loginusers).map(|(id, ..)| id)
+}
+
+/// Returns (account_id, steam64, persona_name, account_name) from loginusers.vdf
+pub fn most_recent_profile(loginusers: &str) -> Option<(u32, String, String, String)> {
     let root = parse_vdf(loginusers);
     let users = root.get("users")?;
     let mut fallback = None;
     for (steam64, info) in users.entries() {
-        let id = steam64.parse::<u64>().ok().and_then(steam64_to_account);
+        let id = steam64.parse::<u64>().ok().and_then(steam64_to_account)?;
+        let persona = info.get("PersonaName").and_then(Vdf::as_str).unwrap_or("Pemain Deadlock").to_string();
+        let account = info.get("AccountName").and_then(Vdf::as_str).unwrap_or("").to_string();
         let recent = info.get("MostRecent").and_then(Vdf::as_str) == Some("1");
-        if recent {
-            return id;
+        let auto = info.get("AutoLogin").and_then(Vdf::as_str) == Some("1");
+        let item = (id, steam64.clone(), persona, account);
+        if recent || auto {
+            return Some(item);
         }
-        fallback = fallback.or(id);
+        if fallback.is_none() {
+            fallback = Some(item);
+        }
     }
     fallback
+}
+
+pub fn find_steam_avatar_hash(steam_dir: &Path, account_id: u32, steam64: &str) -> Option<String> {
+    let localconfig = steam_dir
+        .join("userdata")
+        .join(account_id.to_string())
+        .join("config")
+        .join("localconfig.vdf");
+    let content = std::fs::read_to_string(localconfig).ok()?;
+
+    if let Some(pos) = content.find(steam64) {
+        let window = &content[pos..content.len().min(pos + 400)];
+        if let Some(h_idx) = window.find("avatar_hash") {
+            let rest = &window[h_idx..];
+            for p in rest.split('"') {
+                let trimmed = p.trim();
+                if trimmed.len() == 40 && trimmed.chars().all(|c| c.is_ascii_hexdigit()) {
+                    return Some(trimmed.to_string());
+                }
+            }
+        }
+    }
+
+    for line in content.lines() {
+        if line.contains("\"avatar\"") {
+            for p in line.split('"') {
+                let trimmed = p.trim();
+                if trimmed.len() == 40 && trimmed != "0000000000000000000000000000000000000000" && trimmed.chars().all(|c| c.is_ascii_hexdigit()) {
+                    return Some(trimmed.to_string());
+                }
+            }
+        }
+    }
+
+    None
+}
+
+pub fn local_steam_profile() -> Option<SteamProfile> {
+    let dir = steam_dir()?;
+    let path = dir.join("config").join("loginusers.vdf");
+    let content = std::fs::read_to_string(path).ok()?;
+    let (account_id, steam64, persona_name, account_name) = most_recent_profile(&content)?;
+    let avatar_url = find_steam_avatar_hash(&dir, account_id, &steam64)
+        .map(|hash| format!("https://avatars.steamstatic.com/{}_full.jpg", hash));
+    Some(SteamProfile {
+        account_id,
+        steam64,
+        persona_name,
+        account_name,
+        avatar_url,
+    })
 }
 
 pub fn local_account_id() -> Option<u32> {

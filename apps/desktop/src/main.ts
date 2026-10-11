@@ -39,10 +39,54 @@ interface Diag {
 /** shown in the header so it is obvious which build is running */
 let APP_BUILD = "v0.3.5"; // replaced by the real app version at start
 
+export interface SteamProfile {
+  account_id: number;
+  persona_name: string;
+  avatar_hash: string | null;
+  avatar_url: string | null;
+}
+
 interface Settings {
   siteBase: string;
   accountId: number | null;
   configPath: string;
+  profile?: SteamProfile | null;
+}
+
+const HERO_CDN_SLUGS: Record<number, string> = {
+  1: "inferno",
+  2: "seven",
+  3: "vindicta",
+  4: "lady_geist",
+  6: "abrams",
+  7: "wraith",
+  8: "mcginnis",
+  10: "paradox",
+  11: "dynamo",
+  12: "kelvin",
+  13: "haze",
+  14: "holliday",
+  15: "bebop",
+  17: "grey_talon",
+  18: "mo_and_krill",
+  19: "shiv",
+  20: "ivy",
+  25: "warden",
+  27: "yamato",
+  31: "lash",
+  35: "viscous",
+  48: "mirage",
+  50: "calico",
+  52: "viper",
+  53: "magician",
+  54: "wrecker",
+  56: "vampirebat",
+  58: "tokamak",
+};
+
+function getHeroCdnIcon(id: number): string | null {
+  const slug = HERO_CDN_SLUGS[id];
+  return slug ? `https://static.bigbrain.gg/deadlock-img/assets-api-res/images/heroes/${slug}_sm.webp` : null;
 }
 
 // ---------- slim shapes of the website's /api responses ----------
@@ -130,6 +174,8 @@ const S = {
     }
   })(),
   settings: null as Settings | null,
+  steamProfile: null as SteamProfile | null,
+  omniSearchQuery: "",
   game: false,
   matchId: null as number | null,
   matchSource: "",
@@ -239,7 +285,12 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
 
 function heroIcon(id: number, cls = "ico") {
   const h = S.heroes.get(id);
-  return h?.icon ? `<img class="${cls}" src="${esc(h.icon)}" alt="" title="${esc(h.name)}">` : `<span class="${cls}"></span>`;
+  const cdn = getHeroCdnIcon(id);
+  const fallback = h?.icon ? esc(h.icon) : "";
+  if (cdn) {
+    return `<img class="${cls}" src="${cdn}" onerror="if(this.dataset.tried!=='1'){this.dataset.tried='1';if('${fallback}'){this.src='${fallback}'}else{this.style.display='none'}}else{this.style.display='none'}" alt="" title="${esc(h?.name ?? "")}">`;
+  }
+  return h?.icon ? `<img class="${cls}" src="${fallback}" alt="" title="${esc(h.name)}">` : `<span class="${cls}"></span>`;
 }
 const me = () => {
   if (!S.live) return undefined;
@@ -807,6 +858,26 @@ function renderStatus() {
     pinBtn.title = S.isAlwaysOnTop ? "Sematkan aktif (Always on top)" : "Sematkan di atas layar (Always on top)";
   }
 
+  const spPill = document.getElementById("steamProfilePill");
+  if (spPill) {
+    if (S.steamProfile) {
+      spPill.style.display = "inline-flex";
+      spPill.innerHTML = `
+        ${S.steamProfile.avatar_url ? `<img class="steam-avatar-thumb" src="${esc(S.steamProfile.avatar_url)}" alt="">` : ""}
+        <span class="steam-profile-online" title="Steam Terdeteksi"></span>
+        <span class="steam-profile-name">${esc(S.steamProfile.persona_name || `Account #${S.steamProfile.account_id}`)}</span>
+      `;
+    } else if (S.settings?.accountId) {
+      spPill.style.display = "inline-flex";
+      spPill.innerHTML = `
+        <span class="steam-profile-online" title="ID Manual"></span>
+        <span class="steam-profile-name">#${S.settings.accountId}</span>
+      `;
+    } else {
+      spPill.style.display = "none";
+    }
+  }
+
   let html: string;
   if (S.connected && S.live) {
     const stale = staleSeconds();
@@ -1004,17 +1075,42 @@ function abilityCard(r: LiveResp) {
 }
 
 // ---------- pre-game: tilt check + your best heroes ----------
+export interface SummaryMatch {
+  match_id: number;
+  hero_id: number;
+  start_time: number;
+  match_duration_s: number;
+  player_team: number;
+  match_result: number;
+  player_kills: number;
+  player_deaths: number;
+  player_assists: number;
+  net_worth: number;
+  last_hits: number;
+  denies: number;
+}
+
 interface Summary {
   tilt: { warning: string | null; last10: { wins: number; games: number }; streak: number; streakKind: string | null };
   best: { heroId: number; name?: string; matches: number; winrate: number; edge: number }[];
   /** cross-match habits from the overlay logs on this PC (pre-game only) */
   habits?: { matches: number; hudLines: string[]; notes: string[] } | null;
+  matches?: SummaryMatch[];
 }
 let summary: Summary | null = null;
 let summaryAt = 0;
+
+function formatTimeAgo(timestampS: number): string {
+  const diffSec = Math.max(0, Math.floor(Date.now() / 1000 - timestampS));
+  if (diffSec < 60) return "Baru saja";
+  if (diffSec < 3600) return `${Math.floor(diffSec / 60)} mnt lalu`;
+  if (diffSec < 86400) return `${Math.floor(diffSec / 3600)} jam lalu`;
+  return `${Math.floor(diffSec / 86400)} hari lalu`;
+}
+
 async function loadSummary() {
-  const acc = S.settings?.accountId;
-  if (!acc || Date.now() - summaryAt < 600_000) return;
+  const acc = S.steamProfile?.account_id ?? S.settings?.accountId;
+  if (!acc || Date.now() - summaryAt < 30_000) return;
   summaryAt = Date.now();
   try {
     summary = await api<Summary>(`/api/me/summary?account=${acc}`);
@@ -1445,7 +1541,7 @@ interface OverlayData {
 /** why the bundled site is not reachable (from the Rust side), shown in Status koneksi */
 let webNote = "";
 /** form controls that must not be re-rendered while they have focus */
-const GUARDED = new Set(["matchInput", "heroSel", "rosterSearchInput"]);
+const GUARDED = new Set(["matchInput", "heroSel", "rosterSearchInput", "omniSearchInput"]);
 let lastBroadcast = "";
 function broadcast(force = false) {
   const now = Date.now();
@@ -1653,9 +1749,80 @@ function renderLastMatchCard(pm: { matchId: number; won: boolean; durationS: num
   </section>`;
 }
 
+function renderProfileBanner() {
+  const acc = S.steamProfile?.account_id ?? S.settings?.accountId;
+  const persona = S.steamProfile?.persona_name || (acc ? `Player #${acc}` : "Pemain Deadlock");
+  const avatar = S.steamProfile?.avatar_url;
+  return `
+    <div class="player-banner">
+      <div style="display:flex;align-items:center;gap:16px">
+        ${avatar ? `<img class="player-banner-avatar" src="${esc(avatar)}" alt="">` : `<div class="player-banner-avatar" style="display:flex;align-items:center;justify-content:center;background:rgba(229,179,88,0.15);font-size:24px">👤</div>`}
+        <div class="player-banner-info">
+          <div style="display:flex;align-items:center;gap:8px">
+            <span class="player-banner-name">${esc(persona)}</span>
+            ${S.steamProfile ? `<span class="tag ok" style="font-size:10px">✓ Steam Terdeteksi</span>` : ""}
+          </div>
+          <span class="player-banner-id">${acc ? `Steam Account ID: <b>${acc}</b>` : "ID Steam belum terpasang (atur di tab Pengaturan)"}</span>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px">
+        <button class="copy" data-launcher-tab="settings">⚙ Pengaturan</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderMatchHistoryCard() {
+  void loadSummary();
+  if (!summary?.matches?.length) return "";
+  return `<section class="card">
+    <div class="row" style="justify-content:space-between;margin-bottom:8px">
+      <h3>Riwayat Match Terakhir <small>${summary.matches.length} match publik terakhir</small></h3>
+      <span class="small muted">Data via Valve & Deadlock API</span>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:8px">
+      ${summary.matches.map((m) => {
+        const isWin = m.match_result === m.player_team;
+        const hero = S.heroes.get(m.hero_id);
+        const heroName = hero?.name ?? `Hero #${m.hero_id}`;
+        const timeAgo = formatTimeAgo(m.start_time);
+        return `
+          <div class="match-card ${isWin ? "win" : "loss"}">
+            <div class="match-card-main">
+              ${heroIcon(m.hero_id, "ico")}
+              <div>
+                <div style="display:flex;align-items:center;gap:8px">
+                  <span style="font-weight:700;font-size:14px;color:var(--fg)">${esc(heroName)}</span>
+                  <span class="match-badge-outcome ${isWin ? "win" : "loss"}">${isWin ? "VICTORY" : "DEFEAT"}</span>
+                </div>
+                <div class="small muted">Match #${m.match_id} &bull; ${formatClock(m.match_duration_s)}</div>
+              </div>
+            </div>
+            <div class="match-card-stats">
+              <div style="text-align:center">
+                <div class="match-kda">${m.player_kills} / <span style="color:var(--loss)">${m.player_deaths}</span> / ${m.player_assists}</div>
+                <div class="small muted" style="font-size:10px">K / D / A</div>
+              </div>
+              <div style="text-align:right">
+                <div style="font-weight:700;font-size:13px;color:var(--brass)">${k(m.net_worth)}</div>
+                <div class="small muted" style="font-size:10px">${m.last_hits} CS &bull; ${m.denies} deny</div>
+              </div>
+              <div class="match-card-meta">
+                <span class="small" style="font-size:11px">${timeAgo}</span>
+              </div>
+            </div>
+          </div>
+        `;
+      }).join("")}
+    </div>
+  </section>`;
+}
+
 function renderProfileView() {
   return `<div class="home-dashboard">
+    ${renderProfileBanner()}
     ${S.postMatchSummary ? renderLastMatchCard(S.postMatchSummary) : ""}
+    ${renderMatchHistoryCard()}
     ${summaryCard()}
     ${profileCard()}
   </div>`;
@@ -1823,6 +1990,74 @@ function renderHomeView() {
   </div>`;
 }
 
+function handleOmniSearch(query: string) {
+  S.omniSearchQuery = query.trim();
+  const dropdown = document.getElementById("omniDropdown");
+  if (!dropdown) return;
+
+  if (!S.omniSearchQuery) {
+    dropdown.style.display = "none";
+    dropdown.innerHTML = "";
+    return;
+  }
+
+  const q = S.omniSearchQuery.toLowerCase();
+  const isNumeric = /^\d+$/.test(q);
+
+  // Match heroes
+  const matchedHeroes = [...S.heroes.values()]
+    .filter((h) => h.name.toLowerCase().includes(q))
+    .slice(0, 6);
+
+  let itemsHtml = "";
+
+  if (matchedHeroes.length > 0) {
+    itemsHtml += `<div class="omni-group-label" style="padding:4px 8px;font-size:10px;text-transform:uppercase;color:var(--fg-muted);font-weight:700">Hero (${matchedHeroes.length})</div>`;
+    for (const h of matchedHeroes) {
+      itemsHtml += `
+        <div class="omni-item" data-omni-hero="${h.heroId}">
+          ${heroIcon(h.heroId, "ico")}
+          <div class="omni-item-info">
+            <span class="omni-item-title">${esc(h.name)}</span>
+            <span class="omni-item-sub">Tier ${h.tier} &bull; Winrate ${pct(h.winrate, 1)}</span>
+          </div>
+          <span class="small muted" style="font-size:10px">Pilih Hero ↵</span>
+        </div>
+      `;
+    }
+  }
+
+  // If numeric or scout syntax
+  if (isNumeric || q.startsWith("scout:") || q.startsWith("@")) {
+    const targetId = isNumeric ? q : q.replace(/^(scout:|@)/, "").trim();
+    if (targetId && /^\d+$/.test(targetId)) {
+      itemsHtml += `<div class="omni-group-label" style="padding:4px 8px;font-size:10px;text-transform:uppercase;color:var(--fg-muted);font-weight:700">Player Scout</div>`;
+      itemsHtml += `
+        <div class="omni-item" data-omni-player="${esc(targetId)}">
+          <span class="ico" style="display:flex;align-items:center;justify-content:center;background:var(--brass);color:#10141d;font-weight:800;border-radius:4px">🔍</span>
+          <div class="omni-item-info">
+            <span class="omni-item-title">Scout Akun Steam #${esc(targetId)}</span>
+            <span class="omni-item-sub">Lihat hero pool, riwayat winrate, dan tilt check</span>
+          </div>
+          <span class="small muted" style="font-size:10px">Scout ↵</span>
+        </div>
+      `;
+    }
+  }
+
+  if (!itemsHtml) {
+    dropdown.innerHTML = `<div style="padding:10px;text-align:center;font-size:11px;color:var(--fg-muted)">Tidak ada hero atau player cocok dengan "${esc(query)}"</div>`;
+  } else {
+    dropdown.innerHTML = itemsHtml;
+  }
+  dropdown.style.display = "block";
+}
+
+function closeOmniSearch() {
+  const dropdown = document.getElementById("omniDropdown");
+  if (dropdown) dropdown.style.display = "none";
+}
+
 function render() {
   if (WIDGET) return renderWidget();
   broadcast();
@@ -1862,6 +2097,43 @@ function render() {
 // ---------- UI events (delegated) ----------
 document.addEventListener("click", async (e) => {
   const t = e.target as HTMLElement;
+
+  const omniHero = t.closest<HTMLElement>("[data-omni-hero]");
+  if (omniHero) {
+    const id = Number(omniHero.dataset.omniHero);
+    if (id) {
+      S.selectedRosterHero = id;
+      void loadHero(id);
+      S.launcherTab = "roster";
+      closeOmniSearch();
+      const input = document.getElementById("omniSearchInput") as HTMLInputElement | null;
+      if (input) input.value = "";
+      render();
+    }
+    return;
+  }
+  const omniPlayer = t.closest<HTMLElement>("[data-omni-player]");
+  if (omniPlayer) {
+    const accountId = Number(omniPlayer.dataset.omniPlayer);
+    if (accountId) {
+      closeOmniSearch();
+      const input = document.getElementById("omniSearchInput") as HTMLInputElement | null;
+      if (input) input.value = "";
+      const base = (S.settings?.siteBase ?? "http://localhost:3000").replace(/\/$/, "");
+      window.open(`${base}/me?account=${accountId}`, "_blank");
+    }
+    return;
+  }
+  const spPill = t.closest<HTMLElement>("#steamProfilePill");
+  if (spPill) {
+    S.launcherTab = "profile";
+    render();
+    return;
+  }
+  if (!t.closest(".omnisearch-wrap")) {
+    closeOmniSearch();
+  }
+
   const launcherTab = t.closest<HTMLElement>("[data-launcher-tab]");
   if (launcherTab) {
     S.launcherTab = launcherTab.dataset.launcherTab as LauncherTab;
@@ -2001,6 +2273,21 @@ document.addEventListener("focusout", (e) => {
   }
 });
 document.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && (e.key === "k" || e.key === "K")) {
+    e.preventDefault();
+    const omniInput = document.getElementById("omniSearchInput") as HTMLInputElement | null;
+    if (omniInput) {
+      omniInput.focus();
+      omniInput.select();
+      if (omniInput.value) handleOmniSearch(omniInput.value);
+    }
+    return;
+  }
+  if (e.key === "Escape") {
+    closeOmniSearch();
+    const omniInput = document.getElementById("omniSearchInput") as HTMLInputElement | null;
+    if (omniInput && document.activeElement === omniInput) omniInput.blur();
+  }
   if (e.ctrlKey && e.shiftKey && (e.key === "D" || e.key === "d")) {
     e.preventDefault();
     void getCurrentWindow().hide();
@@ -2011,6 +2298,10 @@ document.addEventListener("keydown", (e) => {
 
 document.addEventListener("input", (e) => {
   const t = e.target as HTMLInputElement;
+  if (t.id === "omniSearchInput") {
+    handleOmniSearch(t.value);
+    return;
+  }
   if (t.id === "matchInput") S.matchDraft = t.value;
   if (t.id === "rosterSearchInput") {
     S.rosterSearch = t.value;
@@ -2344,6 +2635,12 @@ async function boot() {
   }
   await step("widget-ready", () => listen<string>("widget-ready", () => broadcast(true)));
   S.settings = (await step("settings", () => invoke<Settings>("settings"), 10)) ?? S.settings;
+  try {
+    S.steamProfile = S.settings?.profile ?? (await invoke<SteamProfile | null>("get_steam_profile").catch(() => null));
+    if (S.steamProfile && !S.settings?.accountId && S.settings) {
+      S.settings.accountId = S.steamProfile.account_id;
+    }
+  } catch {}
   S.layout = (await step("get_layout", () => invoke<typeof S.layout>("get_layout"), 5)) ?? S.layout;
   await step("listen engine", () =>
     listen<EngineEvent>("engine", (e) => {

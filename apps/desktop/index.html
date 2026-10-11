@@ -21,7 +21,14 @@
           <button class="nav-tab" data-launcher-tab="profile"><span class="nav-icon">📜</span> RIWAYAT & ME</button>
           <button class="nav-tab" data-launcher-tab="settings"><span class="nav-icon">⚙️</span> PENGATURAN</button>
         </nav>
+        <div class="omnisearch-wrap">
+          <span class="omnisearch-icon">🔍</span>
+          <input type="text" id="omniSearchInput" class="omnisearch-input" placeholder="Cari hero atau pemain… (Ctrl+K)" spellcheck="false" autocomplete="off" />
+          <kbd class="omnisearch-kbd">Ctrl+K</kbd>
+          <div id="omniDropdown" class="omnisearch-dropdown" style="display:none"></div>
+        </div>
         <span class="grow" data-tauri-drag-region></span>
+        <div class="steam-profile-pill" id="steamProfilePill" style="display:none"></div>
         <div class="window-actions">
           <button class="icon" id="voice" title="Suara saran taktis (klik untuk nyala/mati)">🔊</button>
           <button class="icon" id="pin" title="Sematkan di atas (Always On Top)">📌</button>

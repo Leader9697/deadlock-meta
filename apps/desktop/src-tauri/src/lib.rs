@@ -39,11 +39,17 @@ struct PublicSettings {
     site_base: String,
     account_id: Option<u32>,
     config_path: String,
+    profile: Option<deadlock_live::steam::SteamProfile>,
 }
 
 #[tauri::command]
 fn settings(state: State<'_, AppState>) -> PublicSettings {
     state.settings.clone()
+}
+
+#[tauri::command]
+fn get_steam_profile() -> Option<deadlock_live::steam::SteamProfile> {
+    deadlock_live::steam::local_steam_profile()
 }
 
 /// Why the local site is (not) up: start note, or the exit code + log tail if it died.
@@ -367,6 +373,7 @@ pub fn run() {
                     site_base: cfg.site_base.clone(),
                     account_id: cfg.account_id.or_else(deadlock_live::steam::local_account_id),
                     config_path: config_path.display().to_string(),
+                    profile: deadlock_live::steam::local_steam_profile(),
                 },
             });
             if !taken.is_empty() {
@@ -427,6 +434,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             settings,
+            get_steam_profile,
             web_status,
             engine_snapshot,
             set_match,
