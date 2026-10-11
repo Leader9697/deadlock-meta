@@ -169,6 +169,7 @@ const S = {
       return true;
     }
   })(),
+  layout: null as { widgets: Record<string, { enabled: boolean; w: number; h: number }> } | null,
 };
 
 const $ = (id: string) => document.getElementById(id)!;
@@ -514,8 +515,8 @@ async function saveLog(force: boolean) {
 let lastSpoken = { title: "", at: 0 };
 let audioCtx: AudioContext | null = null;
 
-/** Play a subtle, clean tactical chime before voice cues so it's not jarring */
-function playTacticalChime(kind: "alert" | "info" = "info") {
+/** Play crisp tactical chimes and synthesized audio cues (works offline, zero robotic distortion) */
+function playTacticalChime(kind: "alert" | "info" | "boss" | "retreat" = "info") {
   try {
     const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
     if (!Ctx) return;
@@ -527,7 +528,30 @@ function playTacticalChime(kind: "alert" | "info" = "info") {
     const gain = audioCtx.createGain();
 
     osc.type = "sine";
-    if (kind === "alert") {
+    if (kind === "boss") {
+      // 3-tone ascending alert chime for Mid-Boss (C5 -> E5 -> G5)
+      osc.frequency.setValueAtTime(523.25, now);
+      osc.frequency.setValueAtTime(659.25, now + 0.1);
+      osc.frequency.setValueAtTime(783.99, now + 0.2);
+      gain.gain.setValueAtTime(0.001, now);
+      gain.gain.exponentialRampToValueAtTime(0.14, now + 0.05);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.5);
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start(now);
+      osc.stop(now + 0.51);
+    } else if (kind === "retreat") {
+      // 2-tone descending urgency chime (A5 -> D5)
+      osc.frequency.setValueAtTime(880.0, now);
+      osc.frequency.setValueAtTime(587.33, now + 0.12);
+      gain.gain.setValueAtTime(0.001, now);
+      gain.gain.exponentialRampToValueAtTime(0.15, now + 0.04);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.42);
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start(now);
+      osc.stop(now + 0.43);
+    } else if (kind === "alert") {
       // 2-tone alert chime (F5 -> A5)
       osc.frequency.setValueAtTime(698.46, now);
       osc.frequency.setValueAtTime(880.0, now + 0.08);
@@ -600,8 +624,9 @@ function speakTop(r: LiveResp) {
   if (now - lastSpoken.at < 14_000) return;
   lastSpoken = { title: top.title, at: now };
 
-  const isUrgent = top.priority >= 80 || top.kind === "threat" || top.kind === "retreat" || top.kind === "objective";
-  playTacticalChime(isUrgent ? "alert" : "info");
+  const isBoss = top.title.toLowerCase().includes("boss") || top.detail.toLowerCase().includes("boss");
+  const chimeKind = isBoss ? "boss" : top.kind === "retreat" ? "retreat" : (top.priority >= 80 || top.kind === "threat" || top.kind === "objective") ? "alert" : "info";
+  playTacticalChime(chimeKind);
 
   const cleanText = formatCalloutText(top.title);
   const u = new SpeechSynthesisUtterance(cleanText);
@@ -1250,6 +1275,23 @@ function connectionCard() {
           <input type="checkbox" id="forceGame" ${S.force ? "checked" : ""}>
           <span><b>Mode manual: anggap Deadlock jalan</b> <span class="muted">(pakai jika game sudah terbuka tapi belum terdeteksi)</span></span>
         </label>
+        <div style="margin-top:8px;padding-top:6px;border-top:1px solid var(--line)">
+          <div class="small" style="font-weight:bold;margin-bottom:4px;color:var(--brass)">Tampilkan Widget HUD di Layar:</div>
+          <div class="row small" style="flex-wrap:wrap;gap:10px">
+            <label style="cursor:pointer;display:flex;align-items:center;gap:4px">
+              <input type="checkbox" data-widget-toggle="coach" ${S.layout?.widgets?.coach?.enabled ?? true ? "checked" : ""}> Coach (Tengah Atas)
+            </label>
+            <label style="cursor:pointer;display:flex;align-items:center;gap:4px">
+              <input type="checkbox" data-widget-toggle="win" ${S.layout?.widgets?.win?.enabled ?? true ? "checked" : ""}> Situasi / Win% (Kiri Atas)
+            </label>
+            <label style="cursor:pointer;display:flex;align-items:center;gap:4px">
+              <input type="checkbox" data-widget-toggle="enemies" ${S.layout?.widgets?.enemies?.enabled ?? true ? "checked" : ""}> Lawan (Kiri Tengah)
+            </label>
+            <label style="cursor:pointer;display:flex;align-items:center;gap:4px">
+              <input type="checkbox" data-widget-toggle="buy" ${S.layout?.widgets?.buy?.enabled ?? true ? "checked" : ""}> Next Buy (Kanan)
+            </label>
+          </div>
+        </div>
       </div>
     </details>
   `;
@@ -1503,6 +1545,17 @@ document.addEventListener("change", (e) => {
     S.pregameHero = Number(t.value);
     t.blur(); // lets the deferred render (and the hero's build) through
     void loadHero(S.pregameHero);
+    return;
+  }
+  const widgetToggle = t.closest<HTMLInputElement>("[data-widget-toggle]");
+  if (widgetToggle) {
+    const name = widgetToggle.dataset.widgetToggle!;
+    const enabled = widgetToggle.checked;
+    void invoke("toggle_widget", { name, enabled }).then((layout) => {
+      S.layout = layout as typeof S.layout;
+      render();
+    });
+    return;
   }
 });
 
@@ -1783,6 +1836,7 @@ async function boot() {
   }
   await step("widget-ready", () => listen<string>("widget-ready", () => broadcast(true)));
   S.settings = (await step("settings", () => invoke<Settings>("settings"), 10)) ?? S.settings;
+  S.layout = (await step("get_layout", () => invoke<typeof S.layout>("get_layout"), 5)) ?? S.layout;
   await step("listen engine", () =>
     listen<EngineEvent>("engine", (e) => {
       try {

@@ -106,6 +106,27 @@ fn toggle_edit_mode(app: AppHandle) -> bool {
 }
 
 #[tauri::command]
+fn get_layout(state: State<'_, AppState>) -> widgets::Layout {
+    state.layout.lock().unwrap().clone()
+}
+
+#[tauri::command]
+fn toggle_widget(app: AppHandle, state: State<'_, AppState>, name: String, enabled: bool) -> widgets::Layout {
+    let mut l = state.layout.lock().unwrap();
+    if let Some(w) = l.widgets.get_mut(&name) {
+        w.enabled = enabled;
+    }
+    if let Some(p) = &state.layout_path {
+        widgets::save(p, &l);
+    }
+    let shown = *state.widgets_shown.lock().unwrap();
+    let _ = widgets::create(&app, &l);
+    widgets::set_visible(&app, &l, shown);
+    widgets::apply(&app, &l);
+    l.clone()
+}
+
+#[tauri::command]
 fn reset_layout(app: AppHandle, state: State<'_, AppState>) {
     let mut l = state.layout.lock().unwrap();
     *l = widgets::Layout::default();
@@ -413,7 +434,9 @@ pub fn run() {
             force_game,
             set_click_through,
             toggle_edit_mode,
-            reset_layout
+            reset_layout,
+            get_layout,
+            toggle_widget
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

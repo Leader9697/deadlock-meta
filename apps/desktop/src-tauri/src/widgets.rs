@@ -175,9 +175,9 @@ pub fn apply(app: &AppHandle, l: &Layout) {
 }
 
 pub fn set_visible(app: &AppHandle, l: &Layout, on: bool) {
-    for name in l.widgets.keys() {
+    for (name, p) in &l.widgets {
         if let Some(w) = app.get_webview_window(&label(name)) {
-            if on {
+            if on && p.enabled {
                 let _ = w.show();
                 let _ = w.set_ignore_cursor_events(true);
             } else {

@@ -45,6 +45,11 @@ export interface DraftOddsResult {
 
 const sigmoid = (z: number) => 1 / (1 + Math.exp(-z));
 
+export interface HeroLaneAssignment {
+  heroId: number;
+  lane: number;
+}
+
 /**
  * Calculates win odds for our lineup vs enemy lineup from hero stats,
  * counter matrix, synergies, and phase performance.
@@ -56,8 +61,9 @@ export function calculateDraftOdds(input: {
   counterMatrix?: HeroCounterStats[];
   synergies?: HeroSynergyStats[];
   heroPhases?: Map<number, HeroPhases>;
+  laneAssignments?: Map<number, number>;
 }): DraftOddsResult {
-  const { allies, enemies, heroStats, counterMatrix = [], synergies = [], heroPhases } = input;
+  const { allies, enemies, heroStats, counterMatrix = [], synergies = [], heroPhases, laneAssignments } = input;
 
   // 1. Baseline Hero Win Rates (Bayesian shrink toward 0.50, k = 150)
   const allyBases = allies.map((id) => {
@@ -99,20 +105,28 @@ export function calculateDraftOdds(input: {
       if (pair && pair.matches >= 20) {
         // Delta relative to hero baseline winrate, shrunk with k=100
         const matchupWr = shrink(pair.wins, pair.matches, aWr, 100);
-        const delta = matchupWr - aWr;
-        totalMatchupDelta += delta;
-        matchupPairsCount++;
+        const rawDelta = matchupWr - aWr;
+        
+        // If these heroes face each other on the same lane, the matchup has 2.5x higher impact on the game
+        const isSameLane = laneAssignments && laneAssignments.has(a) && laneAssignments.has(e) && laneAssignments.get(a) === laneAssignments.get(e);
+        const weight = isSameLane ? 2.5 : 1.0;
+        
+        totalMatchupDelta += rawDelta * weight;
+        matchupPairsCount += weight;
 
-        if (delta >= 0.02) {
-          advantages.push({ ourHeroId: a, enemyHeroId: e, delta, reason: `Keunggulan matchup (+${(delta * 100).toFixed(1)}%)` });
-        } else if (delta <= -0.02) {
-          threats.push({ ourHeroId: a, enemyHeroId: e, delta, reason: `Matchup berat (${(delta * 100).toFixed(1)}%)` });
+        const reasonPrefix = isSameLane ? "Lawan lane langsung: " : "";
+        if (rawDelta >= 0.02) {
+          advantages.push({ ourHeroId: a, enemyHeroId: e, delta: rawDelta, reason: `${reasonPrefix}Keunggulan matchup (+${(rawDelta * 100).toFixed(1)}%)` });
+        } else if (rawDelta <= -0.02) {
+          threats.push({ ourHeroId: a, enemyHeroId: e, delta: rawDelta, reason: `${reasonPrefix}Matchup berat (${(rawDelta * 100).toFixed(1)}%)` });
         }
       }
     }
   }
 
-  const matchupDelta = matchupPairsCount > 0 ? totalMatchupDelta / matchupPairsCount : 0;
+  // Normalize by base pair count so extra lane weight amplifies the matchup component
+  const basePairCount = allies.length * enemies.length;
+  const matchupDelta = basePairCount > 0 ? totalMatchupDelta / basePairCount : 0;
   advantages.sort((x, y) => y.delta - x.delta);
   threats.sort((x, y) => x.delta - y.delta);
 

@@ -186,12 +186,45 @@ function slopeAt(model: WinModel, t: number): number | null {
   return w[w.length - 1].k;
 }
 
-/** P(my team wins). `lead` and `total` are souls from my team's view. */
-export function winProbability(model: WinModel | null, gameTimeS: number, lead: number, total: number): number | null {
+export interface WinProbContext {
+  /** Delta objectives destroyed (enemy stages destroyed − our stages destroyed). Positive = we destroyed more enemy towers */
+  objectiveDelta?: number;
+  /** Delta unlocked flex item slots (my team flex slots − enemy team flex slots) */
+  flexSlotDelta?: number;
+}
+
+/** 
+ * P(my team wins). `lead` and `total` are souls from my team's view.
+ * Incorporates objective control and flex item slot deltas when available.
+ */
+export function winProbability(
+  model: WinModel | null,
+  gameTimeS: number,
+  lead: number,
+  total: number,
+  ctx?: WinProbContext,
+): number | null {
   if (!model || total <= 0) return null;
   const k = slopeAt(model, gameTimeS);
   if (k === null) return null;
-  return sigmoid(k * (lead / total));
+
+  // Base net worth slope
+  let z = k * (lead / total);
+
+  // Objectives influence: each destroyed tier (Guardian/Walker/Base) confers significant map control & lane push pressure
+  if (typeof ctx?.objectiveDelta === "number" && ctx.objectiveDelta !== 0) {
+    // A lead of +2 objectives adds equivalent to ~4-6% win rate advantage
+    const objWeight = gameTimeS < 600 ? 0.08 : 0.14;
+    z += ctx.objectiveDelta * objWeight;
+  }
+
+  // Flex slot delta: each unlocked flex slot provides a 4th/5th slot for tier 3/4 items
+  if (typeof ctx?.flexSlotDelta === "number" && ctx.flexSlotDelta !== 0) {
+    const flexWeight = 0.12;
+    z += ctx.flexSlotDelta * flexWeight;
+  }
+
+  return sigmoid(z);
 }
 
 /** Empirical row for display: "teams up 5–10k at 15–22 min won 71% (n=…)". */

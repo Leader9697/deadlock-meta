@@ -37,6 +37,7 @@ import {
   type ItemSlotType,
   type LabItem,
   type LiveState,
+  countDestroyedStages,
 } from "@deadlock/core";
 import {
   getAbilityOrders,
@@ -131,6 +132,13 @@ export async function POST(req: NextRequest) {
   const alliesIds = state.players.filter((p) => p.team === me.team && p.heroId > 0).map((p) => p.heroId);
   const enemiesIds = state.players.filter((p) => p.team !== me.team && p.heroId > 0).map((p) => p.heroId);
   const heroDraftStatsMap = new Map(meta.map((m) => [m.heroId, { heroId: m.heroId, winrate: m.winrate, matches: m.matches }]));
+  const laneAssignments = new Map<number, number>();
+  for (const p of state.players) {
+    if (p.heroId > 0 && typeof p.lane === "number") {
+      laneAssignments.set(p.heroId, p.lane);
+    }
+  }
+
   const draftOdds = calculateDraftOdds({
     allies: alliesIds,
     enemies: enemiesIds,
@@ -138,6 +146,7 @@ export async function POST(req: NextRequest) {
     counterMatrix: matrix,
     synergies,
     heroPhases: phases,
+    laneAssignments,
   });
 
   // counter scores for purchases made in the *current* phase; whole-game merge as fallback
@@ -152,7 +161,22 @@ export async function POST(req: NextRequest) {
   const counter: CounterResult = { items: nowList, bySlot, coveredEnemies: phaseCounter.coveredEnemies };
 
   const total = summary.teamNetWorth[0] + summary.teamNetWorth[1];
-  const econWin = winProbability(model, state.gameTimeS, summary.netWorthLead, total);
+  // Calculate objective delta (enemy towers destroyed − our towers destroyed)
+  let objectiveDelta: number | undefined;
+  if (state.objectiveMasks) {
+    const enemyMask = state.objectiveMasks[1 - me.team];
+    const ourMask = state.objectiveMasks[me.team];
+    objectiveDelta = countDestroyedStages(enemyMask) - countDestroyedStages(ourMask);
+  }
+  let flexSlotDelta: number | undefined;
+  if (state.flexSlots) {
+    flexSlotDelta = (state.flexSlots[me.team] ?? 0) - (state.flexSlots[1 - me.team] ?? 0);
+  }
+
+  const econWin = winProbability(model, state.gameTimeS, summary.netWorthLead, total, {
+    objectiveDelta,
+    flexSlotDelta,
+  });
   // Blend draft prior into win chance: at 0:00 it's 100% draft prediction, fading toward pure economy by ~12:00
   const draftWeight = Math.max(0, Math.min(1, (720 - state.gameTimeS) / 720)) * 0.45;
   const winRaw =

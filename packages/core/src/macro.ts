@@ -60,7 +60,22 @@ export interface MacroInput {
   heroName: (id: number) => string;
 }
 
-function laneStates(input: MacroInput): LaneState[] {
+/** Total stages destroyed (0..12) given an objective mask */
+export function countDestroyedStages(mask: number | undefined): number {
+  if (typeof mask !== "number" || Number.isNaN(mask)) return 0;
+  let destroyed = 0;
+  for (let idx = 1; idx <= 4; idx++) {
+    // stage 0: guardian down (bit idx clear)
+    if (!bit(mask, idx)) destroyed++;
+    // stage 1: walker down (bit 4+idx clear)
+    if (!bit(mask, 4 + idx)) destroyed++;
+    // stage 2: base guardian down (bit 11+idx clear)
+    if (!bit(mask, 11 + idx)) destroyed++;
+  }
+  return destroyed;
+}
+
+export function laneStates(input: MacroInput): LaneState[] {
   const { state, me } = input;
   const colors = [...new Set(state.players.map((p) => p.lane).filter((l): l is number => l != null && LANE_ORDER.includes(l)))].sort((a, b) => a - b);
   const masks = state.objectiveMasks;
