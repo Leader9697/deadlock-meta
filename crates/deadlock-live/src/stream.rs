@@ -234,6 +234,68 @@ impl Aggregator {
         Self { state, ..Default::default() }
     }
 
+    /// Convert Source 2 hero classname (e.g. "hero_inferno", "hero_atlas", "hero_familiar") to known hero_id
+    pub fn hero_class_to_id(name: &str) -> Option<u32> {
+        let clean = name.strip_prefix("hero_").unwrap_or(name);
+        match clean {
+            "inferno" | "infernus" => Some(1),
+            "seven" | "gigawatt" => Some(2),
+            "vindicta" => Some(3),
+            "lady_geist" | "ghost" => Some(4),
+            "abrams" => Some(6),
+            "wraith" => Some(7),
+            "mcginnis" | "forge" => Some(8),
+            "paradox" | "chronos" => Some(10),
+            "dynamo" => Some(11),
+            "kelvin" => Some(12),
+            "haze" => Some(13),
+            "holliday" | "astro" => Some(14),
+            "bebop" => Some(15),
+            "grey_talon" | "archer" => Some(17),
+            "mo_and_krill" | "krill" => Some(18),
+            "shiv" => Some(19),
+            "ivy" | "tengu" => Some(20),
+            "warden" => Some(25),
+            "yamato" => Some(27),
+            "lash" => Some(31),
+            "viscous" | "goo" => Some(35),
+            "atlas" | "calico" => Some(65),
+            "familiar" | "wrecker" => Some(62),
+            "mirage" => Some(50),
+            _ => None,
+        }
+    }
+
+    /// Immediately apply zero-delay local console events
+    pub fn apply_local_hero(&mut self, my_account: u32, hero_class: &str) -> bool {
+        if my_account == 0 {
+            return false;
+        }
+        if let Some(hid) = Self::hero_class_to_id(hero_class) {
+            let p = self.state.player_mut(my_account);
+            if p.hero_id != hid {
+                p.hero_id = hid;
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Zero-delay local respawn
+    pub fn apply_local_respawn(&mut self, my_account: u32, hero_class: &str) -> bool {
+        if my_account == 0 {
+            return false;
+        }
+        let hid = Self::hero_class_to_id(hero_class).unwrap_or(0);
+        let p = self.state.player_mut(my_account);
+        if hid > 0 && p.hero_id == hid && p.dead {
+            p.dead = false;
+            p.respawn_in_s = None;
+            return true;
+        }
+        false
+    }
+
     /// Server tickrate (measured: ~60 tick messages/s in console.log net stats).
     pub const TICKRATE: f64 = 60.0;
 

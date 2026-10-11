@@ -52,6 +52,12 @@ pub struct LogPatterns {
     /// Lines that mean the match is over / we left. Empty by default: the live stream's
     /// GameOverEvent and stream end are used instead.
     pub match_end: Vec<String>,
+    /// Zero-delay hero spawn/loaded lines from local console.log
+    pub hero_loaded: Vec<String>,
+    /// Zero-delay hero respawn events
+    pub hero_respawn: Vec<String>,
+    /// Zero-delay game state changes (e.g. HeroSelection, GameInProgress)
+    pub game_state: Vec<String>,
 }
 
 /// SQL streams for `/v1/matches/demo/live/query`, one SSE connection each. Rows are
@@ -108,9 +114,26 @@ impl Default for LogPatterns {
                 r"^(?:\S+ \S+ )?Lobby \d+ for Match (?P<id>\d{6,}) created".into(),
             ],
             // [SteamNetSockets] AuthStatus (steamid:76561198802383751):  OK  (OK)
-            self_steam: vec![r"AuthStatus \(steamid:(?P<id>7656119\d{10})\):\s+OK".into()],
-            player: vec![],
-            match_end: vec![],
+            self_steam: vec![
+                r"AuthStatus \(steamid:(?P<id>7656119\d{10})\):\s+OK".into(),
+                r#"\[Server\] SV:\s+"[^"]*<\[U:1:(?P<id>\d+)\]><>"\s+STEAM USERID validated"#.into(),
+            ],
+            player: vec![
+                r#"\[Server\] SV:\s+"[^"]*<\[U:1:(?P<id>\d+)\]><>"\s+STEAM USERID validated"#.into(),
+            ],
+            match_end: vec![
+                r"Disconnecting from server: NETWORK_DISCONNECT_".into(),
+            ],
+            hero_loaded: vec![
+                r#"\[Server\] Loaded hero (?P<entity>\d+)/(?P<hero>hero_\w+)"#.into(),
+            ],
+            hero_respawn: vec![
+                r"(?P<hero>hero_\w+)\s+respawned".into(),
+            ],
+            game_state: vec![
+                r"Entering game state:\s*(?P<state>\d+)\s*\((?P<name>\w+)\)".into(),
+                r"ChangeGameState:\s*(?P<name>\w+)\s*\((?P<state>\d+)\)".into(),
+            ],
         }
     }
 }
@@ -195,7 +218,8 @@ FROM ObjectiveMaskEvent",
 /// v7: killfeed + death recap, hero pawn index.
 /// v8: flex slot unlocks.
 /// v9: game_mode and match_mode detection (street brawl vs normal / ranked).
-pub const CONFIG_VERSION: u32 = 9;
+/// v10: zero-delay local console events (loaded heroes, respawns, game states).
+pub const CONFIG_VERSION: u32 = 10;
 
 impl Config {
     /// Older config files keep the user's own settings but get the current built-in
@@ -269,7 +293,7 @@ sql = "SELECT m_steamID AS account_id FROM CCitadelPlayerController"
         let c: Config = toml::from_str("site_base = \"https://meta.example\"\n[log]\nmatch_id = [\"x(?P<id>\\\\d+)\"]").unwrap();
         assert_eq!(c.site_base, "https://meta.example");
         assert_eq!(c.log.match_id, vec!["x(?P<id>\\d+)".to_string()]);
-        assert_eq!(c.log.self_steam.len(), 1); // untouched → default
+        assert_eq!(c.log.self_steam.len(), 2); // untouched → default (authstatus + server validated)
         assert_eq!(c.poll_log_ms, 750);
     }
 }

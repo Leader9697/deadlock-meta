@@ -16,6 +16,9 @@ pub enum LogEvent {
     SelfAccount(u32),
     Player(u32),
     MatchEnd,
+    HeroLoaded { entity: u32, hero: String },
+    HeroRespawn(String),
+    GameState { state: u32, name: String },
 }
 
 pub struct Matchers {
@@ -23,6 +26,9 @@ pub struct Matchers {
     self_steam: Vec<Regex>,
     player: Vec<Regex>,
     match_end: Vec<Regex>,
+    hero_loaded: Vec<Regex>,
+    hero_respawn: Vec<Regex>,
+    game_state: Vec<Regex>,
 }
 
 impl Matchers {
@@ -33,6 +39,9 @@ impl Matchers {
             self_steam: compile(&p.self_steam)?,
             player: compile(&p.player)?,
             match_end: compile(&p.match_end)?,
+            hero_loaded: compile(&p.hero_loaded)?,
+            hero_respawn: compile(&p.hero_respawn)?,
+            game_state: compile(&p.game_state)?,
         })
     }
 
@@ -45,12 +54,15 @@ impl Matchers {
             }
         }
         for re in &self.self_steam {
-            if let Some(a) = re
-                .captures(line)
-                .and_then(|c| c.name("id")?.as_str().parse::<u64>().ok())
-                .and_then(steam64_to_account)
-            {
-                out.push(LogEvent::SelfAccount(a));
+            if let Some(c) = re.captures(line) {
+                if let Some(id_str) = c.name("id").map(|m| m.as_str()) {
+                    if let Ok(raw) = id_str.parse::<u64>() {
+                        let acc = if raw > u32::MAX as u64 { steam64_to_account(raw) } else { Some(raw as u32) };
+                        if let Some(a) = acc.filter(|a| *a > 0) {
+                            out.push(LogEvent::SelfAccount(a));
+                        }
+                    }
+                }
             }
         }
         for re in &self.player {
@@ -65,6 +77,28 @@ impl Matchers {
         }
         if self.match_end.iter().any(|re| re.is_match(line)) {
             out.push(LogEvent::MatchEnd);
+        }
+        for re in &self.hero_loaded {
+            if let Some(c) = re.captures(line) {
+                let entity = c.name("entity").and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
+                if let Some(hero) = c.name("hero").map(|m| m.as_str().to_string()) {
+                    out.push(LogEvent::HeroLoaded { entity, hero });
+                }
+            }
+        }
+        for re in &self.hero_respawn {
+            if let Some(c) = re.captures(line) {
+                if let Some(hero) = c.name("hero").map(|m| m.as_str().to_string()) {
+                    out.push(LogEvent::HeroRespawn(hero));
+                }
+            }
+        }
+        for re in &self.game_state {
+            if let Some(c) = re.captures(line) {
+                let state = c.name("state").and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
+                let name = c.name("name").map(|m| m.as_str().to_string()).unwrap_or_default();
+                out.push(LogEvent::GameState { state, name });
+            }
         }
     }
 }
@@ -100,7 +134,7 @@ pub fn backscan(content: &str, m: &Matchers, max_age_min: i64) -> (Option<u64>, 
                 LogEvent::MatchId(id) => last_match = Some((*id, ts)),
                 LogEvent::SelfAccount(a) => me = Some(*a),
                 LogEvent::MatchEnd => last_match = None,
-                LogEvent::Player(_) => {}
+                _ => {}
             }
         }
     }

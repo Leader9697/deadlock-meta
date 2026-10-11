@@ -155,6 +155,25 @@ pub async fn run(cfg: Config, events: mpsc::Sender<EngineEvent>, mut cmds: mpsc:
                             if let Some(l) = live.as_mut() { l.agg.state.my_account_id = a; }
                         }
                         LogEvent::Player(a) => { lobby.insert(a); }
+                        LogEvent::HeroLoaded { hero, .. } => {
+                            if let Some(l) = live.as_mut() {
+                                if l.agg.apply_local_hero(my_account, &hero) {
+                                    l.dirty = true;
+                                    let _ = events.send(EngineEvent::LiveState(l.agg.state.clone())).await;
+                                }
+                            }
+                        }
+                        LogEvent::HeroRespawn(hero) => {
+                            if let Some(l) = live.as_mut() {
+                                if l.agg.apply_local_respawn(my_account, &hero) {
+                                    l.dirty = true;
+                                    let _ = events.send(EngineEvent::LiveState(l.agg.state.clone())).await;
+                                }
+                            }
+                        }
+                        LogEvent::GameState { name, .. } => {
+                            let _ = events.send(EngineEvent::Status { message: format!("Status game: {name}") }).await;
+                        }
                         LogEvent::MatchEnd => {
                             if let Some(l) = live.take() {
                                 l.task.abort();
