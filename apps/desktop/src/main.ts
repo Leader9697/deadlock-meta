@@ -1132,7 +1132,7 @@ function heroPickCard() {
   const selected = S.heroes.get(S.pregameHero ?? 0);
   return `<section class="card">
     <h3>Pilih hero sebelum main <small>klik avatar atau pilih dropdown</small></h3>
-    <div class="hero-avatar-strip">
+    <div class="hero-avatar-strip" id="heroAvatarStrip">
       ${heroes
         .map(
           (h) => `
@@ -1246,7 +1246,20 @@ function render() {
     pendingRender = true;
     return;
   }
-  $("view").innerHTML = fatalHtml() + updateCard() + parts.join("");
+  const viewEl = $("view");
+  const prevViewScroll = viewEl.scrollTop;
+  const stripEl = document.getElementById("heroAvatarStrip");
+  const prevStripScroll = stripEl ? stripEl.scrollTop : null;
+
+  viewEl.innerHTML = fatalHtml() + updateCard() + parts.join("");
+
+  if (prevViewScroll > 0) {
+    viewEl.scrollTop = prevViewScroll;
+  }
+  if (prevStripScroll !== null) {
+    const newStripEl = document.getElementById("heroAvatarStrip");
+    if (newStripEl) newStripEl.scrollTop = prevStripScroll;
+  }
 }
 
 // ---------- UI events (delegated) ----------
