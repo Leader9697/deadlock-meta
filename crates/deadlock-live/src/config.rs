@@ -112,6 +112,12 @@ impl Default for LogPatterns {
                 r"Received Steam datagram ticket for server .*\bmatch_id=(?P<id>\d{6,})".into(),
                 // Lobby 174168628286840337 for Match 112973749 created
                 r"^(?:\S+ \S+ )?Lobby \d+ for Match (?P<id>\d{6,}) created".into(),
+                // General match_id lines (e.g. match_id=12345678, match_id: 12345678, match_id 12345678)
+                r"\bmatch_id[=:\s]+(?P<id>\d{6,})".into(),
+                // Match 12345678 created / Entering match 12345678 / Match: 12345678
+                r"\bMatch(?:[:\s]+|#)(?P<id>\d{6,})".into(),
+                // Connecting to [U:1:...] / match_id=12345678
+                r"Connecting to .*match_id=(?P<id>\d{6,})".into(),
             ],
             // [SteamNetSockets] AuthStatus (steamid:76561198802383751):  OK  (OK)
             self_steam: vec![
@@ -219,7 +225,8 @@ FROM ObjectiveMaskEvent",
 /// v8: flex slot unlocks.
 /// v9: game_mode and match_mode detection (street brawl vs normal / ranked).
 /// v10: zero-delay local console events (loaded heroes, respawns, game states).
-pub const CONFIG_VERSION: u32 = 10;
+/// v11: expanded match_id detection regex patterns for broader game console log variations.
+pub const CONFIG_VERSION: u32 = 11;
 
 impl Config {
     /// Older config files keep the user's own settings but get the current built-in
@@ -264,7 +271,7 @@ mod tests {
         let s = toml::to_string_pretty(&Config::default()).unwrap();
         let c: Config = toml::from_str(&s).unwrap();
         assert_eq!(c.live.queries, Config::default().live.queries);
-        assert_eq!(c.log.match_id.len(), 2);
+        assert_eq!(c.log.match_id.len(), 5);
     }
 
     #[test]

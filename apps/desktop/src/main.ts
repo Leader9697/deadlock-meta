@@ -1117,14 +1117,25 @@ function heroCard() {
        }</p>`
     : "";
   const builds = h.builds.length
-    ? h.builds
+    ? `<div class="row small muted" style="justify-content:space-between;margin-bottom:6px;padding:0 4px;font-size:11px">
+        <span style="flex:1">NAMA BUILD</span>
+        <span style="width:70px;text-align:right">WIN RATE</span>
+        <span style="width:65px;text-align:right">SAMPEL</span>
+        <span style="width:75px;text-align:right">KODE BUILD</span>
+      </div>` +
+      h.builds
         .map(
-          (b) => `<div class="row"><span class="name">${esc(b.name)}</span><span class="small ${wrCls(b.winrate)}">${pct(b.winrate)}</span><span class="small muted">${b.matches}</span><button class="copy" data-copy="${b.id}">ID ${b.id}</button></div>`,
+          (b) => `<div class="row" style="align-items:center;padding:4px 0">
+            <span class="name" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(b.name)}">${esc(b.name)}</span>
+            <span class="small ${wrCls(b.winrate)}" style="width:70px;text-align:right;font-weight:bold" title="Win Rate build">${pct(b.winrate)}</span>
+            <span class="small muted" style="width:65px;text-align:right" title="Jumlah match yang memakai build ini">${b.matches.toLocaleString()} match</span>
+            <span style="width:75px;text-align:right"><button class="copy" data-copy="${b.id}" title="Klik untuk copy ID build ke game Deadlock">ID ${b.id}</button></span>
+          </div>`,
         )
         .join("")
     : `<div class="empty">Belum ada build dengan sampel cukup.</div>`;
   return `<section class="card"><h3><span class="row">${heroIcon(h.hero.id, "ico sm")} ${esc(h.hero.name)}</span> <small>winrate per durasi match</small></h3>${phaseHtml}</section>
-  <section class="card"><h3>Build terbaik <small>klik untuk copy ID</small></h3>${builds}</section>`;
+  <section class="card"><h3>Build Terbaik Komunitas <small>Pilih & Copy ID ke Deadlock</small></h3>${builds}</section>`;
 }
 
 const DEADLOCK_APP = 1422450;

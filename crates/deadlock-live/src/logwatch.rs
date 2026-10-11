@@ -46,11 +46,17 @@ impl Matchers {
     }
 
     pub fn scan_line(&self, line: &str, out: &mut Vec<LogEvent>) {
+        let mut matched_match_id = false;
         for re in &self.match_id {
             for c in re.captures_iter(line) {
                 if let Some(id) = c.name("id").and_then(|m| m.as_str().parse().ok()) {
                     out.push(LogEvent::MatchId(id));
+                    matched_match_id = true;
+                    break;
                 }
+            }
+            if matched_match_id {
+                break;
             }
         }
         for re in &self.self_steam {
