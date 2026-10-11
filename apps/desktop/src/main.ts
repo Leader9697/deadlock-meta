@@ -170,6 +170,7 @@ const S = {
     }
   })(),
   layout: null as { widgets: Record<string, { enabled: boolean; w: number; h: number }> } | null,
+  postMatchSummary: null as { matchId: number; won: boolean; durationS: number; netWorth: number; kda: string } | null,
 };
 
 const $ = (id: string) => document.getElementById(id)!;
@@ -682,10 +683,22 @@ function onEngine(ev: EngineEvent) {
       void postLive(changed);
       break;
     }
-    case "live-ended":
+    case "live-ended": {
       S.ended = true;
+      const m = me();
+      if (m && S.live && S.matchId) {
+        const won = S.live.winningTeam !== undefined ? S.live.winningTeam === m.team : false;
+        S.postMatchSummary = {
+          matchId: S.matchId,
+          won,
+          durationS: S.live.gameTimeS,
+          netWorth: m.netWorth,
+          kda: `${m.kills}/${m.deaths}/${m.assists}`,
+        };
+      }
       void postLive(true).then(() => saveLog(true));
       break;
+    }
     case "error":
       S.error = ev.message;
       break;
@@ -1405,6 +1418,20 @@ function render() {
     if (S.tab === "hero") parts.push(heroCard(), profileCard());
     parts.push(`<div class="row" style="gap:6px"><input id="matchInput" class="small" placeholder="Ganti Match ID" inputmode="numeric" style="width:120px" value="${esc(S.matchDraft)}"><button class="copy" id="matchGo">Live</button><button class="copy" id="matchStop">Stop</button><span style="flex:1"></span><button class="copy" id="hudEdit">Atur posisi HUD (Ctrl+Shift+E)</button><button class="copy" id="hudReset">Reset</button></div>`);
   } else {
+    if (S.postMatchSummary) {
+      const pm = S.postMatchSummary;
+      parts.push(`<section class="card" style="border:1px solid ${pm.won ? "var(--win)" : "var(--loss)"};background:rgba(${pm.won ? "103,194,127" : "226,103,92"},0.08)">
+        <h3>Ringkasan Match Terakhir <small>Match #${pm.matchId}</small></h3>
+        <div class="row" style="justify-content:space-between;margin-top:4px">
+          <span style="font-size:16px;font-weight:bold;color:${pm.won ? "var(--win)" : "var(--loss)"}">${pm.won ? "MENANG (VICTORY) 🎉" : "KALAH (DEFEAT)"}</span>
+          <span class="small muted">Durasi: ${formatClock(pm.durationS)}</span>
+        </div>
+        <div class="row small" style="margin-top:6px;gap:12px">
+          <span>Souls Akhir: <b>${k(pm.netWorth)}</b></span>
+          <span>K/D/A: <b>${esc(pm.kda)}</b></span>
+        </div>
+      </section>`);
+    }
     if (S.live && !r) parts.push(`<section class="card"><div class="empty">Menghitung…</div></section>`);
     parts.push(connectionCard());
     parts.push(summaryCard());
@@ -1705,10 +1732,17 @@ function renderWidget() {
     if (WIDGET === "buy") html = beliHud(r);
     if (WIDGET === "enemies" && HUD.team) html = teamHtml(true);
     else if (WIDGET === "enemies" && !HUD.focus) {
-      html = `<section class="card hud"><h3>Lawan</h3>${r.matchups
+      const priorityEnemy = r.matchups.find((m) => m.isTargetPriority);
+      const priorityBadge = priorityEnemy
+        ? `<div class="hud-line small" style="background:rgba(232,146,58,0.15);border:1px solid var(--weapon);border-radius:4px;padding:3px 6px;margin-bottom:6px">
+            🎯 <b>TARGET UTAMA:</b> ${esc(priorityEnemy.heroName)}
+            <div class="muted" style="font-size:10px">${esc(priorityEnemy.priorityReason ?? "")}</div>
+          </div>`
+        : "";
+      html = `<section class="card hud"><h3>Lawan</h3>${priorityBadge}${r.matchups
         .map((mu) => {
           const v = VERDICT[mu.verdict];
-          return `<div class="row enemy-line ${mu.verdict}">${heroIcon(mu.heroId, "ico sm")}<span class="name">${esc(mu.heroName)}</span>${mu.laneOpponent ? `<span class="tag hot">L</span>` : ""}${(mu.archetypes ?? []).slice(0, 1).map((a) => `<span class="tag">${ARCH_NAME[a] ?? a}</span>`).join("")}<span class="small ${mu.nwDiff > 0 ? "loss" : "win"}">${mu.nwDiff >= 0 ? "+" : "−"}${k(Math.abs(mu.nwDiff))}</span><span class="tag ${v.cls}">${v.label}${mu.verdict === "dead" && mu.respawnInS ? ` ${Math.round(mu.respawnInS)}s` : ""}</span></div>${
+          return `<div class="row enemy-line ${mu.verdict}${mu.isTargetPriority ? " focus" : ""}">${heroIcon(mu.heroId, "ico sm")}<span class="name">${esc(mu.heroName)}</span>${mu.isTargetPriority ? `<span class="tag hot" title="Target prioritas di teamfight">FOCUS</span>` : ""}${mu.laneOpponent ? `<span class="tag hot">L</span>` : ""}${(mu.archetypes ?? []).slice(0, 1).map((a) => `<span class="tag">${ARCH_NAME[a] ?? a}</span>`).join("")}<span class="small ${mu.nwDiff > 0 ? "loss" : "win"}">${mu.nwDiff >= 0 ? "+" : "−"}${k(Math.abs(mu.nwDiff))}</span><span class="tag ${v.cls}">${v.label}${mu.verdict === "dead" && mu.respawnInS ? ` ${Math.round(mu.respawnInS)}s` : ""}</span></div>${
             mu.bestCounter && mu.verdict !== "dead" ? `<div class="small muted counter-line">↳ ${esc(mu.bestCounter.name)} <span class="win">+${(mu.bestCounter.delta * 100).toFixed(1)}%</span></div>` : ""
           }`;
         })

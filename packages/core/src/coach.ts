@@ -65,6 +65,9 @@ export interface EnemyMatchup {
   notable: { name: string; note: string }[];
   /** expected share of this enemy's damage that is bullets */
   bulletShare: number | null;
+  /** Primary focus target in teamfights (highest threat with lowest defensive buffer) */
+  isTargetPriority?: boolean;
+  priorityReason?: string;
 }
 
 export interface CoachInput {
@@ -183,7 +186,7 @@ export function enemyMatchups(input: CoachInput, delay: number): EnemyMatchup[] 
   const owned = new Set(me.itemIds);
   const prof = new Map((input.profiles ?? []).map((p) => [p.accountId, p]));
   const early = phaseAt(input.state.gameTimeS) === "early";
-  return summary.threats.map(({ player: p }) => {
+  const list: EnemyMatchup[] = summary.threats.map(({ player: p }) => {
     const pr = prof.get(p.accountId);
     const laneOpponent = me.lane != null && p.lane != null && me.lane === p.lane;
     const md = matchupDelta(p.heroId);
@@ -226,6 +229,28 @@ export function enemyMatchups(input: CoachInput, delay: number): EnemyMatchup[] 
       bulletShare: pr ? pr.bulletShare : null,
     };
   });
+
+  // Calculate Primary Target Priority in teamfights:
+  // Identify the highest-threat enemy that is alive and not a pure tank
+  const aliveEnemies = list.filter((e) => !e.dead);
+  if (aliveEnemies.length > 0) {
+    // Sort by net worth descending, prioritizing squishy carries over tanks
+    const target = [...aliveEnemies].sort((a, b) => {
+      const aTank = a.archetypes.includes("tank") ? 1 : 0;
+      const bTank = b.archetypes.includes("tank") ? 1 : 0;
+      if (aTank !== bTank) return aTank - bTank; // Non-tanks prioritized
+      return b.netWorth - a.netWorth; // Highest NW prioritized
+    })[0];
+
+    if (target) {
+      target.isTargetPriority = true;
+      target.priorityReason = target.archetypes.includes("tank")
+        ? `Fokus tumbangkan bersama tim (${k(target.netWorth)} souls)`
+        : `Target burst utama (Carry ${k(target.netWorth)} souls, minim defensif)`;
+    }
+  }
+
+  return list;
 }
 
 export function coach(input: CoachInput): CoachOutput {

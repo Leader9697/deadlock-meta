@@ -293,8 +293,14 @@ function pickInTiers(need: Need, input: AdaptiveInput, exclude: Set<number>, flo
     }
     const c = counter.get(it.id);
     const hd = input.heroItemDelta(it.id);
+
+    // Active item fatigue protection: Deadlock only has 4 active item keys (Z, X, C, V or 1, 2, 3, 4).
+    // If the player already owns 2 or more active items, heavily penalize additional active items to prevent keybind fatigue.
+    const activeOwned = input.me.itemIds.filter((id) => input.lab.get(id)?.is_active_item).length;
+    const activePenalty = it.is_active_item && activeOwned >= 2 ? (activeOwned >= 3 ? 0.05 : 0.02) : 0;
+
     // data first; mild preference for the phase's natural tier
-    const score = (c?.score ?? 0) * 1.0 + (hd ?? 0) * 0.5 + magnitude + ((it.item_tier ?? 1) === cap ? 0.004 : 0) + ((it.item_tier ?? 1) === cap - 1 ? 0.002 : 0);
+    const score = (c?.score ?? 0) * 1.0 + (hd ?? 0) * 0.5 + magnitude + ((it.item_tier ?? 1) === cap ? 0.004 : 0) + ((it.item_tier ?? 1) === cap - 1 ? 0.002 : 0) - activePenalty;
     if (!best || score > best.score) {
       const why = [c && Math.abs(c.score) >= 0.003 ? `vs lineup ${pts(c.score)}` : "", hd != null && Math.abs(hd) >= 0.005 ? `di hero kamu ${pts(hd)}` : ""].filter(Boolean).join(", ");
       best = { item: it, score, why };
