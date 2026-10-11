@@ -10,3 +10,5 @@ target
 dist
 apps/desktop/src-tauri/gen/
 *.key
+.agents/
+graphify-out/

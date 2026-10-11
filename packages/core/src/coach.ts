@@ -57,7 +57,7 @@ export interface EnemyMatchup {
   matchupDelta: number | null;
   recentItems: string[];
   bestCounter: { name: string; delta: number } | null;
-  verdict: "duel" | "avoid" | "even" | "dead";
+  verdict: "duel" | "avoid" | "even" | "dead" | "focus";
   advice: string;
   /** shares my assigned lane */
   laneOpponent: boolean;
@@ -244,9 +244,30 @@ export function enemyMatchups(input: CoachInput, delay: number): EnemyMatchup[] 
 
     if (target) {
       target.isTargetPriority = true;
-      target.priorityReason = target.archetypes.includes("tank")
-        ? `Fokus tumbangkan bersama tim (${k(target.netWorth)} souls)`
-        : `Target burst utama (Carry ${k(target.netWorth)} souls, minim defensif)`;
+      const wasAvoid = target.verdict === "avoid";
+      const wasDuel = target.verdict === "duel";
+      target.verdict = "focus";
+      if (wasAvoid) {
+        target.priorityReason = `Fokus burst bersama tim — carry kaya (${k(target.netWorth)} souls), bahaya jika 1v1 sendirian`;
+        const clean = target.advice.replace(/^Hindari 1v1( — )?/, "");
+        target.advice = clean
+          ? `Target burst tim (jangan 1v1 sendirian) — ${clean}`
+          : "Target burst tim (jangan 1v1 sendirian)";
+      } else if (wasDuel) {
+        target.priorityReason = `Target empuk — habisi cepat di teamfight (${k(target.netWorth)} souls)`;
+        const clean = target.advice.replace(/^Boleh duel( — )?/, "");
+        target.advice = clean
+          ? `Target burst tim (aman di-duel) — ${clean}`
+          : "Target burst tim (aman di-duel)";
+      } else {
+        target.priorityReason = target.archetypes.includes("tank")
+          ? `Fokus tumbangkan bersama tim (${k(target.netWorth)} souls)`
+          : `Target burst utama (Carry ${k(target.netWorth)} souls, minim defensif)`;
+        const clean = target.advice.replace(/^Seimbang, main bareng tim( — )?/, "");
+        target.advice = clean
+          ? `Fokus burst bersama tim — ${clean}`
+          : "Fokus burst bersama tim";
+      }
     }
   }
 

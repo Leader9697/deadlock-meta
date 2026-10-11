@@ -1085,9 +1085,10 @@ function readCard(r: LiveResp) {
 
 const VERDICT: Record<EnemyMatchup["verdict"], { label: string; cls: string }> = {
   duel: { label: "DUEL", cls: "win" },
-  avoid: { label: "HINDARI", cls: "loss" },
+  avoid: { label: "HINDARI 1v1", cls: "loss" },
   even: { label: "SEIMBANG", cls: "" },
   dead: { label: "MATI", cls: "muted" },
+  focus: { label: "BURST TIM", cls: "hot" },
 };
 
 function enemiesCard(r: LiveResp) {
@@ -1097,9 +1098,9 @@ function enemiesCard(r: LiveResp) {
       .map((mu) => {
         const sc = scoutBy.get(mu.accountId);
         const v = VERDICT[mu.verdict];
-        return `<div class="enemy ${mu.verdict}">
+        return `<div class="enemy ${mu.verdict}${mu.isTargetPriority ? " focus" : ""}">
         <div class="row">${heroIcon(mu.heroId)}
-          <div class="grow2"><div class="row"><b class="name">${esc(mu.heroName)}</b>${mu.laneOpponent ? `<span class="tag hot">LANE</span>` : ""}${(mu.archetypes ?? []).map((a) => `<span class="tag">${ARCH_NAME[a] ?? a}</span>`).join("")}<span class="tag ${v.cls}">${v.label}${mu.verdict === "dead" && mu.respawnInS ? ` ${Math.round(mu.respawnInS)}s` : ""}</span></div>
+          <div class="grow2"><div class="row"><b class="name">${esc(mu.heroName)}</b>${mu.isTargetPriority ? `<span class="tag hot">TARGET UTAMA</span>` : ""}${mu.laneOpponent ? `<span class="tag hot">LANE</span>` : ""}${(mu.archetypes ?? []).map((a) => `<span class="tag">${ARCH_NAME[a] ?? a}</span>`).join("")}<span class="tag ${v.cls}">${v.label}${mu.verdict === "dead" && mu.respawnInS ? ` ${Math.round(mu.respawnInS)}s` : ""}</span></div>
           <div class="small muted">${esc(sc?.name ?? "")} · ${mu.kda} · ${k(mu.netWorth)} <span class="${mu.nwDiff > 0 ? "loss" : "win"}">(${mu.nwDiff >= 0 ? "+" : "−"}${k(Math.abs(mu.nwDiff))})</span>${
             mu.matchupDelta != null ? ` · matchup <span class="${mu.matchupDelta >= 0 ? "win" : "loss"}">${delta(mu.matchupDelta)}%</span>` : ""
           }</div></div>
@@ -1762,7 +1763,7 @@ function renderWidget() {
             ${heroIcon(mu.heroId, "ico sm")}
             ${isDead && mu.respawnInS ? `<div class="avatar-respawn-overlay">${Math.round(mu.respawnInS)}s</div>` : ""}
           </div>`;
-          return `<div class="row enemy-line ${mu.verdict}${mu.isTargetPriority ? " focus" : ""}">${avatar}<span class="name">${esc(mu.heroName)}</span>${mu.isTargetPriority ? `<span class="tag hot" title="Target prioritas di teamfight">FOCUS</span>` : ""}${mu.laneOpponent ? `<span class="tag hot">L</span>` : ""}${(mu.archetypes ?? []).slice(0, 1).map((a) => `<span class="tag">${ARCH_NAME[a] ?? a}</span>`).join("")}<span class="small ${mu.nwDiff > 0 ? "loss" : "win"}">${mu.nwDiff >= 0 ? "+" : "−"}${k(Math.abs(mu.nwDiff))}</span><span class="tag ${v.cls}">${v.label}${mu.verdict === "dead" && mu.respawnInS ? ` ${Math.round(mu.respawnInS)}s` : ""}</span></div>${
+          return `<div class="row enemy-line ${mu.verdict}${mu.isTargetPriority ? " focus" : ""}">${avatar}<span class="name">${esc(mu.heroName)}</span>${mu.laneOpponent ? `<span class="tag hot">L</span>` : ""}${(mu.archetypes ?? []).slice(0, 1).map((a) => `<span class="tag">${ARCH_NAME[a] ?? a}</span>`).join("")}<span class="small ${mu.nwDiff > 0 ? "loss" : "win"}">${mu.nwDiff >= 0 ? "+" : "−"}${k(Math.abs(mu.nwDiff))}</span><span class="tag ${v.cls}">${v.label}${mu.verdict === "dead" && mu.respawnInS ? ` ${Math.round(mu.respawnInS)}s` : ""}</span></div>${
             mu.bestCounter && mu.verdict !== "dead" ? `<div class="small muted counter-line">↳ ${esc(mu.bestCounter.name)} <span class="win">+${(mu.bestCounter.delta * 100).toFixed(1)}%</span></div>` : ""
           }`;
         })
