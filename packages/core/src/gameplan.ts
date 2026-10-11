@@ -79,7 +79,7 @@ export function gamePlan(input: {
     detail =
       p >= 0.55
         ? `Kamu masih unggul, tapi lineup lawan lebih kuat di ${PHASE_LABEL[theirWindow]}. Ubah lead jadi objektif sekarang, jangan farm berlama-lama.`
-        : `Lineup lawan unggul ${pts(-edge(now))} poin di fase ini. Hindari fight 6v6 terbuka; cari pick-off dan main di dekat tower sendiri.`;
+        : `Lineup lawan unggul ${pts(-edge(now))} poin di fase ini. Hindari teamfight terbuka; cari pick-off dan main di dekat tower sendiri.`;
   } else {
     stance = "seimbang";
     title = "Seimbang: main rapi";

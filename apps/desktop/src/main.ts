@@ -1196,7 +1196,7 @@ function broadcast(force = false) {
     return m ? soulsNow(m) : null;
   })() };
   const data: OverlayData = { hud, r: S.liveResp, live: S.live, connected: S.connected, matchId: S.matchId, heroes: [...S.heroes], scout: S.scout };
-  const key = JSON.stringify([data.r, data.live?.gameTimeS, data.connected, data.heroes.length, S.scoutKey, hud]);
+  const key = JSON.stringify([data.r, data.matchId, data.live?.gameTimeS, data.connected, data.heroes.length, S.scoutKey, hud]);
   if (!force && key === lastBroadcast) return;
   lastBroadcast = key;
   void emit("overlay-data", data);
@@ -1510,10 +1510,25 @@ function renderWidget() {
         })
         .join("")}</section>`;
     }
-  } else if (WIDGET === "coach" && HUD.toast) {
-    html = `<div class="hud-toast">${esc(HUD.toast)}</div>`;
+  } else if (WIDGET === "coach") {
+    if (HUD.toast) {
+      html = `<div class="hud-toast">${esc(HUD.toast)}</div>`;
+    } else if (S.matchId || S.live || S.connected) {
+      const isBrawl = S.live?.gameMode === "brawl" || (S.live && S.live.players.length > 0 && S.live.players.length <= 8);
+      const title = isBrawl ? "Street Brawl 4v4" : S.matchId ? `Match #${S.matchId}` : "Menyiapkan Coach";
+      const desc = isBrawl ? "Draft 3 item acak per ronde · Menunggu live data…" : "Menghubungkan ke broadcast live…";
+      html = `<section class="coach calm compact hud"><div class="coach-main"><span class="coach-ico">⏱</span><div class="coach-txt"><b>${esc(title)}</b><p>${esc(desc)}</p></div></div></section>`;
+    }
+  } else if (WIDGET === "buy" && (S.matchId || S.live)) {
+    const isBrawl = S.live?.gameMode === "brawl" || (S.live && S.live.players.length > 0 && S.live.players.length <= 8);
+    html = `<section class="card hud beli"><h3>Beli</h3><div class="empty">${isBrawl ? "Brawl 4v4: Pilih item dari 3 draft acak tiap ronde" : "Menunggu live item…"}</div></section>`;
   } else if (WIDGET === "win" && !HUD.focus) {
-    html = habitsHud(HUD.habits);
+    if (S.matchId || S.live) {
+      const isBrawl = S.live?.gameMode === "brawl" || (S.live && S.live.players.length > 0 && S.live.players.length <= 8);
+      html = `<section class="card hud situasi"><h3>Situasi ${isBrawl ? '<span class="tag hot">Brawl 4v4</span>' : ""}</h3><div class="empty">Menghubungkan ke data match…</div></section>`;
+    } else {
+      html = habitsHud(HUD.habits);
+    }
   }
   if (editing) {
     const NAME: Record<string, string> = { coach: "HUD Coach", win: "HUD Situasi", buy: "HUD Beli", enemies: "HUD Lawan" };

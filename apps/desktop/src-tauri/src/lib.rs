@@ -370,12 +370,15 @@ pub fn run() {
                         // game over (winner known) or stream finished: take the overlay off the screen
                         EngineEvent::LiveState(st) if st.winning_team.is_some() => match_over(&handle),
                         EngineEvent::LiveEnded { .. } => match_over(&handle),
+                        EngineEvent::MatchDetected { .. } => {
+                            *handle.state::<AppState>().over.lock().unwrap() = false;
+                            widgets_visible(&handle, true);
+                        }
                         EngineEvent::LiveState(_) | EngineEvent::LiveConnected { .. } => {
                             if !*handle.state::<AppState>().over.lock().unwrap() {
                                 widgets_visible(&handle, true);
                             }
                         }
-                        EngineEvent::MatchDetected { .. } => *handle.state::<AppState>().over.lock().unwrap() = false,
                         EngineEvent::GameStopped => widgets_visible(&handle, false),
                         _ => {}
                     }

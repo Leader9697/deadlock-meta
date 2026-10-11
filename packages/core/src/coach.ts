@@ -11,7 +11,7 @@ import type { CounterResult } from "./counter";
 import type { MacroPlan } from "./macro";
 import type { GamePlan } from "./gameplan";
 import { formatClock } from "./stats";
-import type { LivePlayer, LiveState, LiveSummary } from "./live";
+import { detectMode, type LivePlayer, type LiveState, type LiveSummary } from "./live";
 import type { HeroPhases, PhaseKey } from "./phases";
 import type { HeroBuild, Item } from "./types";
 
@@ -110,7 +110,7 @@ const secs = (s: number) => (s >= 60 ? `${Math.floor(s / 60)}:${String(Math.roun
 export function compareTeamPhases(phases: Map<number, HeroPhases>, mine: number[], enemy: number[]): TeamPhaseCompare | null {
   const avg = (ids: number[]) => {
     const hs = ids.map((id) => phases.get(id)).filter((h): h is HeroPhases => !!h);
-    if (hs.length < 3) return null;
+    if (hs.length < 2) return null;
     const r = { early: 0, mid: 0, late: 0 } as Record<PhaseKey, number>;
     for (const h of hs) for (const p of ["early", "mid", "late"] as const) r[p] += h.phases[p].winrate / hs.length;
     return r;
@@ -257,7 +257,15 @@ export function coach(input: CoachInput): CoachOutput {
   // Real-time calls from deaths ("push, 2 dead" / "retreat, 2 allies dead") and the macro
   // farm/group plan were removed: with the broadcast 1+ minute late they arrived after the
   // window had closed. The stable game plan (gameplan.ts) replaces them.
-  if (input.gamePlan) {
+  const mode = detectMode(state);
+  if (mode.isBrawl) {
+    tips.push({
+      kind: "tempo",
+      priority: 45,
+      title: "Street Brawl 4v4: Teamfight cepat",
+      detail: "Draft 3 item acak per ronde. Prioritaskan item aktif & counter langsung untuk memenangkan ronde ini.",
+    });
+  } else if (input.gamePlan) {
     const g = input.gamePlan;
     tips.push({ kind: g.stance === "tekan" || g.stance === "tutup" ? "push" : g.stance === "scale" ? "farm" : "tempo", priority: 40, title: g.title, detail: g.detail });
   }
