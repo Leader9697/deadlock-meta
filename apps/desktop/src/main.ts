@@ -37,7 +37,7 @@ interface Diag {
 }
 
 /** shown in the header so it is obvious which build is running */
-let APP_BUILD = "v0.2.0"; // replaced by the real app version at start
+let APP_BUILD = "v0.3.4"; // replaced by the real app version at start
 
 interface Settings {
   siteBase: string;
@@ -1003,37 +1003,134 @@ function heroCard() {
 }
 
 const DEADLOCK_APP = 1422450;
-/** Checklist before the match: is the overlay actually hooked up? */
+/** Checklist & hub before the match: clean and friendly dashboard */
 function connectionCard() {
   const d = S.diag;
+  const isReady = !!(d?.game || S.game);
+  const isLive = !!(d?.live_connected || S.connected);
+  const siteBase = (S.settings?.siteBase ?? "http://localhost:3000").replace(/\/$/, "");
+
+  // Hero status banner
+  const banner = `
+    <div class="home-banner ${isLive ? "live" : isReady ? "ready" : ""}">
+      <div class="banner-badge">${isLive ? "🔴" : isReady ? "🟢" : "⏳"}</div>
+      <div class="banner-content">
+        <div class="banner-title">${isLive ? "Match Live Terhubung" : isReady ? "Deadlock Siap & Terhubung" : "Menunggu Game Deadlock"}</div>
+        <div class="banner-desc">${isLive ? `Live #${S.matchId ?? "?"} · Asisten & HUD aktif real-time` : isReady ? "Proses game terdeteksi. Asisten akan aktif otomatis saat match dimulai." : "Buka Deadlock di Steam (Borderless Windowed + launch option <code>-condebug</code>)."}</div>
+      </div>
+    </div>
+  `;
+
+  // Status pills
+  const pills = `
+    <div class="home-stat-grid">
+      <div class="stat-pill">
+        <span class="stat-pill-label">STATUS GAME</span>
+        <span class="stat-pill-val ${isReady ? "win" : "muted"}">${isReady ? "✓ Terhubung" : "Belum Jalan"}</span>
+      </div>
+      <div class="stat-pill">
+        <span class="stat-pill-label">AKUN STEAM</span>
+        <span class="stat-pill-val">${d && d.account_id > 0 ? "#" + d.account_id : "Auto"}</span>
+      </div>
+      <div class="stat-pill">
+        <span class="stat-pill-label">SERVER LOCAL</span>
+        <span class="stat-pill-val ${S.heroes.size > 0 ? "win" : "muted"}">${S.heroes.size > 0 ? "✓ Siap" : webNote ? esc(webNote) : "Menyala…"}</span>
+      </div>
+    </div>
+  `;
+
+  // Quick Match launcher
+  const launcher = `
+    <div class="match-launcher">
+      <div class="match-input-wrap">
+        <span class="match-input-icon">🎮</span>
+        <input id="matchInput" placeholder="Ketik Match ID untuk live manual…" inputmode="numeric" value="${esc(S.matchDraft)}">
+      </div>
+      <button class="btn" id="matchGo">Mulai Live</button>
+      ${S.matchId ? `<button class="btn" id="matchStop" style="background:#443f33">Stop</button>` : ""}
+    </div>
+  `;
+
+  // Quick Action cards
+  const quickActions = `
+    <div class="quick-actions-grid">
+      <button class="quick-action-card" id="hudEdit">
+        <span class="quick-action-ico">🎯</span>
+        <div class="quick-action-text">
+          <strong>Atur Posisi HUD</strong>
+          <span>Geser widget di layar</span>
+        </div>
+      </button>
+      <button class="quick-action-card" data-copy="${esc(siteBase)}">
+        <span class="quick-action-ico">📊</span>
+        <div class="quick-action-text">
+          <strong>Tier List & Meta</strong>
+          <span>Buka link web meta</span>
+        </div>
+      </button>
+      <button class="quick-action-card" data-copy="${esc(siteBase + "/counter")}">
+        <span class="quick-action-ico">🛡️</span>
+        <div class="quick-action-text">
+          <strong>Counter Builder</strong>
+          <span>Analisis lawan & item</span>
+        </div>
+      </button>
+      <button class="quick-action-card" data-copy="${esc(siteBase + "/draft")}">
+        <span class="quick-action-ico">⚖️</span>
+        <div class="quick-action-text">
+          <strong>Draft Analyzer</strong>
+          <span>Prediksi komposisi tim</span>
+        </div>
+      </button>
+    </div>
+  `;
+
+  // Advanced diagnostics inside collapsible accordion
   const ok = (b: boolean | null, label: string, detail: string) =>
     `<div class="row small" style="gap:6px;align-items:flex-start"><span style="width:16px;color:${b == null ? "var(--muted)" : b ? "#7bd88f" : "#ff6b6b"}">${b == null ? "…" : b ? "✓" : "✗"}</span><span><b>${label}</b> <span class="muted">${detail}</span></span></div>`;
-  if (!d) return `<section class="card"><h3>Status koneksi</h3>${ok(null, "Engine", "belum mengirim status (tunggu 3 dtk; kalau tetap begini, app versi lama atau engine crash)")}</section>`;
-  const age = d.log_age_s;
+
+  const age = d?.log_age_s;
   const ageTxt = age == null ? "" : age < 60 ? `ditulis ${age} dtk lalu` : `terakhir ditulis ${Math.round(age / 60)} mnt lalu`;
-  const gameDetail = d.game
+  const gameDetail = d?.game
     ? `terhubung (lewat ${esc(d.found_by ?? "?")})`
-    : `belum · ${d.procs_seen} proses terbaca${d.procs_seen === 0 ? " (app tidak bisa membaca daftar proses)" : ""}, Steam: ${d.steam_app ? (d.steam_app === DEADLOCK_APP ? "Deadlock jalan" : `app ${d.steam_app}`) : "tidak ada game"}`;
-  const rows = [
-    ok(d.game, "Deadlock", gameDetail),
-    ok(d.log_exists, "console.log", d.log_exists ? `ada · ${ageTxt}` : `tidak ada${d.log_path ? ` di ${esc(d.log_path)}` : ""} → tambahkan -condebug di Launch Options`),
-    ok(d.account_id > 0, "Akun Steam", d.account_id > 0 ? `#${d.account_id}` : "tidak ketemu (isi account_id di config)"),
-    ok(S.heroes.size > 0, "Server data", S.heroes.size > 0 ? "siap" : webNote ? esc(webNote) : "menyala…"),
-    ok(d.match_id != null ? (d.live_connected || S.connected) : null, "Match", d.match_id != null ? `#${d.match_id} · ${d.live_connected || S.connected ? "live tersambung" : "menunggu broadcast (±1–2 mnt setelah match mulai)"}` : "belum ada (muncul otomatis saat match mulai, atau isi manual)"),
-  ];
-  return `<section class="card"><h3>Status koneksi <small>${d.game ? "siap" : "cek di bawah"}</small></h3>${rows.join("")}
-    <label class="row small" style="gap:6px;cursor:pointer;margin-top:8px"><input type="checkbox" id="forceGame" ${S.force ? "checked" : ""}>
-      <span><b>Mode manual: anggap Deadlock jalan</b> <span class="muted">(pakai kalau baris Deadlock tetap ✗ padahal game sudah terbuka)</span></span></label>
-    <div class="row" style="margin-top:6px"><input id="matchInput" placeholder="Match ID (opsional)" inputmode="numeric" style="flex:1" value="${esc(S.matchDraft)}"><button class="btn" id="matchGo">Live</button>${S.matchId ? `<button class="btn" id="matchStop">Stop</button>` : ""}</div>
-  </section>`;
+    : `belum · ${d?.procs_seen ?? 0} proses terbaca${(d?.procs_seen ?? 0) === 0 ? " (app tidak bisa membaca daftar proses)" : ""}, Steam: ${d?.steam_app ? (d.steam_app === DEADLOCK_APP ? "Deadlock jalan" : `app ${d.steam_app}`) : "tidak ada game"}`;
+
+  const rows = d
+    ? [
+        ok(d.game, "Deadlock", gameDetail),
+        ok(d.log_exists, "console.log", d.log_exists ? `ada · ${ageTxt}` : `tidak ada${d.log_path ? ` di ${esc(d.log_path)}` : ""} → tambahkan -condebug di Launch Options`),
+        ok(d.account_id > 0, "Akun Steam", d.account_id > 0 ? `#${d.account_id}` : "tidak ketemu (isi account_id di config)"),
+        ok(S.heroes.size > 0, "Server data", S.heroes.size > 0 ? "siap" : webNote ? esc(webNote) : "menyala…"),
+        ok(d.match_id != null ? (d.live_connected || S.connected) : null, "Match", d.match_id != null ? `#${d.match_id} · ${d.live_connected || S.connected ? "live tersambung" : "menunggu broadcast"}` : "belum ada (otomatis saat match mulai)"),
+      ]
+    : [ok(null, "Engine", "Menunggu status engine…")];
+
+  const diag = `
+    <details class="diag-details">
+      <summary><span>⚙ Detail Diagnostik & Pengaturan Lanjut</span><span style="font-size:10px">▼</span></summary>
+      <div class="diag-content">
+        ${rows.join("")}
+        <label class="row small" style="gap:6px;cursor:pointer;margin-top:6px">
+          <input type="checkbox" id="forceGame" ${S.force ? "checked" : ""}>
+          <span><b>Mode manual: anggap Deadlock jalan</b> <span class="muted">(pakai jika game sudah terbuka tapi belum terdeteksi)</span></span>
+        </label>
+      </div>
+    </details>
+  `;
+
+  return `<section class="card" style="padding:10px">${banner}${pills}${launcher}${quickActions}${diag}</section>`;
 }
 
 function heroPickCard() {
   const heroes = [...S.heroes.values()].sort((a, b) => a.name.localeCompare(b.name));
+  const selected = S.heroes.get(S.pregameHero ?? 0);
   return `<section class="card">
-    <h3>Build sebelum main</h3>
-    <div class="row"><select id="heroSel" style="flex:1"><option value="">Pilih hero untuk lihat build…</option>
-      ${heroes.map((h) => `<option value="${h.heroId}" ${h.heroId === S.pregameHero ? "selected" : ""}>${esc(h.name)}</option>`).join("")}</select></div>
+    <h3>Pilih hero sebelum main <small>pelajari build & power spike</small></h3>
+    <div class="row">
+      ${selected ? heroIcon(selected.heroId, "ico") : `<span class="ico" style="display:grid;place-items:center;color:var(--muted)">🎮</span>`}
+      <select id="heroSel" style="flex:1"><option value="">Pilih hero untuk lihat build & panduan…</option>
+        ${heroes.map((h) => `<option value="${h.heroId}" ${h.heroId === S.pregameHero ? "selected" : ""}>${esc(h.name)} (WR ${pct(h.winrate, 0)} · Tier ${h.tier})</option>`).join("")}</select>
+    </div>
   </section>`;
 }
 
@@ -1199,6 +1296,7 @@ document.addEventListener("click", async (e) => {
     renderStatus();
     return;
   }
+  if (t.id === "min") await getCurrentWindow().minimize();
   if (t.id === "hide") await getCurrentWindow().hide();
   if (t.id === "hudEdit") await invoke("toggle_edit_mode");
   if (t.id === "hudReset") await invoke("reset_layout");
