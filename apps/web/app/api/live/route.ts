@@ -185,7 +185,10 @@ export async function POST(req: NextRequest) {
   );
   const damage = damageProfile(profiles);
   const myLab = me.itemIds.map((id) => lab.get(id)).filter((x): x is LabItem => !!x);
-  const needs = findNeeds(profiles, damage, myLab, heroName);
+  const allyLabItems = state.players
+    .filter((p) => p.team === me.team && p.accountId !== me.accountId)
+    .map((p) => p.itemIds.map((id) => lab.get(id)).filter((x): x is LabItem => !!x));
+  const needs = findNeeds(profiles, damage, myLab, heroName, allyLabItems);
   const core = flow ? flowPhasePlan(flow, ITEM_PHASE_S, items) : null;
   const tierRows = heroItemsByTier(heroItems, items, meta.find((m) => m.heroId === me.heroId)?.matches ?? 0);
   const heroDelta = new Map<number, number>();

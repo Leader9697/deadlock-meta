@@ -501,24 +501,108 @@ async function saveLog(force: boolean) {
 }
 
 // ---------- voice cues ----------
+// ---------- voice & audio cues ----------
 let lastSpoken = { title: "", at: 0 };
+let audioCtx: AudioContext | null = null;
+
+/** Play a subtle, clean tactical chime before voice cues so it's not jarring */
+function playTacticalChime(kind: "alert" | "info" = "info") {
+  try {
+    const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    if (!Ctx) return;
+    if (!audioCtx) audioCtx = new Ctx();
+    if (audioCtx.state === "suspended") void audioCtx.resume();
+
+    const now = audioCtx.currentTime;
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+
+    osc.type = "sine";
+    if (kind === "alert") {
+      // 2-tone alert chime (F5 -> A5)
+      osc.frequency.setValueAtTime(698.46, now);
+      osc.frequency.setValueAtTime(880.0, now + 0.08);
+      gain.gain.setValueAtTime(0.001, now);
+      gain.gain.exponentialRampToValueAtTime(0.12, now + 0.03);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.35);
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start(now);
+      osc.stop(now + 0.36);
+    } else {
+      // Gentle confirmation chime (E5 -> B5)
+      osc.frequency.setValueAtTime(659.25, now);
+      osc.frequency.setValueAtTime(987.77, now + 0.07);
+      gain.gain.setValueAtTime(0.001, now);
+      gain.gain.exponentialRampToValueAtTime(0.08, now + 0.03);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.3);
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start(now);
+      osc.stop(now + 0.31);
+    }
+  } catch {
+    // Audio context not allowed or failed, fallback gracefully
+  }
+}
+
+/** Pick the most human, natural sounding voice (prioritizing Natural Neural engines) */
 function pickVoice(): SpeechSynthesisVoice | null {
   const vs = window.speechSynthesis?.getVoices() ?? [];
-  return vs.find((v) => v.lang.toLowerCase().startsWith("id")) ?? vs.find((v) => v.lang.toLowerCase().startsWith("ms")) ?? null;
+  if (!vs.length) return null;
+
+  // 1. Indonesian Natural / Neural (Edge / Windows 11)
+  const idNatural = vs.find(
+    (v) => (v.name.includes("Natural") || v.name.includes("Online")) && (v.lang.startsWith("id") || v.lang.startsWith("ms")),
+  );
+  if (idNatural) return idNatural;
+
+  // 2. Standard Indonesian / Malay
+  const idStd = vs.find((v) => v.lang.toLowerCase().startsWith("id")) ?? vs.find((v) => v.lang.toLowerCase().startsWith("ms"));
+  if (idStd) return idStd;
+
+  // 3. High-quality English Natural if Indonesian is unavailable
+  const enNatural = vs.find((v) => v.name.includes("Natural") && v.lang.startsWith("en"));
+  if (enNatural) return enNatural;
+
+  return vs[0] ?? null;
 }
+
+/** Formats coaching titles into concise, natural spoken voice callouts */
+function formatCalloutText(title: string): string {
+  return title
+    .replace(/[:·]/g, ", ")
+    .replace(/\bvs\b/gi, "lawan")
+    .replace(/±/g, "sekitar ")
+    .replace(/\bdtk\b/gi, "detik")
+    .replace(/\bmnt\b/gi, "menit")
+    .replace(/⚠/g, "")
+    .replace(/⚡/g, "")
+    .replace(/🎯/g, "")
+    .trim();
+}
+
 function speakTop(r: LiveResp) {
   if (!S.voice || !("speechSynthesis" in window) || S.live?.winningTeam !== undefined) return;
   const top = r.tips[0];
   if (!top || top.priority < 70) return;
   const now = Date.now();
   if (top.title === lastSpoken.title && now - lastSpoken.at < 90_000) return;
-  if (now - lastSpoken.at < 15_000) return;
+  if (now - lastSpoken.at < 14_000) return;
   lastSpoken = { title: top.title, at: now };
-  const u = new SpeechSynthesisUtterance(top.title.replace(/[:·]/g, ",").replace(/\bvs\b/gi, "lawan"));
+
+  const isUrgent = top.priority >= 80 || top.kind === "threat" || top.kind === "retreat" || top.kind === "objective";
+  playTacticalChime(isUrgent ? "alert" : "info");
+
+  const cleanText = formatCalloutText(top.title);
+  const u = new SpeechSynthesisUtterance(cleanText);
   const v = pickVoice();
   if (v) u.voice = v;
   u.lang = v?.lang ?? "id-ID";
-  u.rate = 1.1;
+  // Pitch and rate adjusted for crisp natural callout (not monotone robot)
+  u.rate = 1.05;
+  u.pitch = 1.0;
+
   window.speechSynthesis.cancel();
   window.speechSynthesis.speak(u);
 }

@@ -270,7 +270,7 @@ export function coach(input: CoachInput): CoachOutput {
     tips.push({ kind: g.stance === "tekan" || g.stance === "tutup" ? "push" : g.stance === "scale" ? "farm" : "tempo", priority: 40, title: g.title, detail: g.detail });
   }
 
-  // --- mid boss ---
+  // --- mid boss & objective windows ---
   if (state.midBossInS != null) {
     const real = state.midBossInS - delay;
     if (real > -30 && real < 120) {
@@ -287,6 +287,14 @@ export function coach(input: CoachInput): CoachOutput {
             : { kind: "objective", priority: 65, title: `Mid boss ${when}`, detail: "Seimbang: datang bersama tim, contest hanya kalau jumlah tidak kalah." },
       );
     }
+  } else if (state.gameTimeS >= 600 && deadEnemies.length >= 2 && aliveAllies >= 4 && !me.dead) {
+    // Window emas: musuh kalah jumlah di mid/late game saat mid-boss sudah ada di map
+    tips.push({
+      kind: "objective",
+      priority: 85,
+      title: "Mid-Boss Terbuka: Ambil Sekarang!",
+      detail: `${deadEnemies.length} musuh mati dan tim kamu unggul jumlah. Paksa Mid-Boss atau hancurkan Base Guardian lawan sekarang!`,
+    });
   }
 
   // --- laning (first 10 min): your lane opponent(s) ---

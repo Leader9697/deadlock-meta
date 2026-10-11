@@ -144,9 +144,16 @@ export function findNeeds(
   dmg: DamageProfile,
   myItems: LabItem[],
   heroName: (id: number) => string,
+  teamItems?: LabItem[][],
 ): Need[] {
   const have = new Set<ItemTag>();
   for (const it of myItems) for (const t of itemTags(it)) have.add(t);
+  const teamHave = new Set<ItemTag>();
+  if (teamItems) {
+    for (const allyItems of teamItems) {
+      for (const it of allyItems) for (const t of itemTags(it)) teamHave.add(t);
+    }
+  }
   // resist only counts as answered with a real amount (side stats of 5–8% do not)
   const resist = (type: string) => sum(myItems.map((it) => itemInnate(it).get(type) ?? 0));
   if (resist("MODIFIER_VALUE_BULLET_ARMOR_DAMAGE_RESIST") < 15) have.delete("bullet_resist");
@@ -159,10 +166,12 @@ export function findNeeds(
   if (sustain.length) {
     const share = sum(sustain.map((p) => p.weight)) / W;
     const hpm = sustain.map((p) => p.healPerMin).filter((x): x is number => x != null);
+    const teamHasAntiHeal = teamHave.has("anti_heal");
+    const teamGapNote = !teamHasAntiHeal && teamItems && teamItems.length >= 2 ? " (belum ada di tim)" : "";
     out.push({
       kind: "anti_heal",
-      urgency: Math.min(1, 0.35 + share * 1.3),
-      reason: `${names(sustain)} punya sustain besar${hpm.length ? ` (±${Math.round(Math.max(...hpm))} heal/menit)` : ""}`,
+      urgency: Math.min(1, (!teamHasAntiHeal ? 0.45 : 0.35) + share * 1.3),
+      reason: `${names(sustain)} punya sustain besar${hpm.length ? ` (±${Math.round(Math.max(...hpm))} heal/menit)` : ""}${teamGapNote}`,
       heroIds: sustain.map((p) => p.heroId),
       satisfied: have.has("anti_heal"),
     });
