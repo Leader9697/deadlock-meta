@@ -53,7 +53,7 @@ export type Query = Record<string, QueryValue>;
  * Extra fetch options. In Next.js pass `{ next: { revalidate: 600 } }` to cache;
  * the core package stays framework-agnostic so the Tauri app can reuse it.
  */
-export type FetchInit = RequestInit & Record<string, unknown>;
+export type FetchInit = RequestInit & { timeoutMs?: number; retries?: number } & Record<string, unknown>;
 
 export class DeadlockApiError extends Error {
   constructor(
@@ -106,9 +106,69 @@ export function createClient(opts: ClientOptions = {}) {
     const headers = new Headers(opts.init?.headers as HeadersInit | undefined);
     headers.set("accept", "application/json");
     if (opts.apiKey) headers.set("X-API-KEY", opts.apiKey);
-    const res = await doFetch(url, { ...opts.init, ...init, headers });
-    if (!res.ok) throw new DeadlockApiError(res.status, url, await res.text().catch(() => ""));
-    return (await res.json()) as T;
+
+    const maxRetries = typeof init?.retries === "number" ? init.retries : 2;
+    const timeoutMs = typeof init?.timeoutMs === "number" ? init.timeoutMs : 10_000;
+    let lastError: unknown;
+
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const controller = new AbortController();
+        timer = setTimeout(() => controller.abort(new Error(`Timeout after ${timeoutMs}ms`)), timeoutMs);
+
+        if (init?.signal) {
+          init.signal.addEventListener("abort", () => controller.abort(init.signal?.reason));
+        }
+
+        const res = await doFetch(url, { ...opts.init, ...init, headers, signal: controller.signal });
+        clearTimeout(timer);
+
+        // Respect rate limits (429)
+        if (res.status === 429) {
+          const retryHeader = res.headers.get("retry-after");
+          const retrySec = retryHeader ? parseInt(retryHeader, 10) : (attempt + 1) * 2;
+          const waitMs = Math.min(Math.max(1000, (Number.isNaN(retrySec) ? 2 : retrySec) * 1000), 10_000);
+          if (attempt < maxRetries) {
+            await new Promise((r) => setTimeout(r, waitMs));
+            continue;
+          }
+          throw new DeadlockApiError(res.status, url, await res.text().catch(() => "Rate limit exceeded (429)"));
+        }
+
+        // 5xx errors: transient server problems, retry with backoff
+        if (res.status >= 500) {
+          if (attempt < maxRetries) {
+            await new Promise((r) => setTimeout(r, (attempt + 1) * 1000));
+            continue;
+          }
+          throw new DeadlockApiError(res.status, url, await res.text().catch(() => ""));
+        }
+
+        if (!res.ok) {
+          throw new DeadlockApiError(res.status, url, await res.text().catch(() => ""));
+        }
+
+        return (await res.json()) as T;
+      } catch (err) {
+        if (timer) clearTimeout(timer);
+        lastError = err;
+
+        // If it's a DeadlockApiError with non-retryable 4xx (except 429), throw immediately
+        if (err instanceof DeadlockApiError && err.status >= 400 && err.status < 500 && err.status !== 429) {
+          throw err;
+        }
+
+        // Retry transient network errors or timeouts
+        if (attempt < maxRetries) {
+          await new Promise((r) => setTimeout(r, (attempt + 1) * 1000));
+          continue;
+        }
+        throw err;
+      }
+    }
+
+    throw lastError;
   }
 
   return {

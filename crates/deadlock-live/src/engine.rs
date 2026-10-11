@@ -258,13 +258,35 @@ pub async fn run(cfg: Config, events: mpsc::Sender<EngineEvent>, mut cmds: mpsc:
     }
 }
 
+use std::sync::Mutex;
+
+static SPECTATE_CALLS: Mutex<Vec<Instant>> = Mutex::new(Vec::new());
+
+fn record_spectate_and_quota() -> (usize, Option<u64>) {
+    let mut calls = match SPECTATE_CALLS.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    let now = Instant::now();
+    let one_hour = Duration::from_secs(3600);
+    calls.retain(|&t| now.duration_since(t) < one_hour);
+    calls.push(now);
+    let count = calls.len();
+    let reset_secs = if count >= 6 {
+        calls.first().map(|&oldest| one_hour.saturating_sub(now.duration_since(oldest)).as_secs())
+    } else {
+        None
+    };
+    (count, reset_secs)
+}
+
 fn start_live(api: &Api, cfg: &Config, match_id: u64, my_account: u32, events: mpsc::Sender<EngineEvent>) -> Live {
     let (tx, rx) = mpsc::channel::<Result<Value, String>>(1024);
     let api = api.clone();
     let queries = cfg.live.queries.clone();
     let task = tokio::spawn(async move {
         let Some(url) = resolve_url(&api, match_id, &events).await else {
-            let _ = tx.send(Err("Broadcast tidak tersedia untuk match ini (setelah 15 menit mencoba).".into())).await;
+            let _ = tx.send(Err("Broadcast tidak tersedia untuk match ini (setelah 90 menit mencoba).".into())).await;
             return;
         };
         let _ = events.send(EngineEvent::Status { message: "Broadcast ditemukan, menunggu data…".into() }).await;
@@ -290,28 +312,40 @@ fn start_live(api: &Api, cfg: &Config, match_id: u64, my_account: u32, events: m
 /// Finds a broadcast URL without burning the spectate quota:
 /// 1. poll the public live-URL list every 20 s (cheap),
 /// 2. ask deadlock-api to spectate at most 3 times, spaced ≥3 min (6/hour per IP),
-///    giving up after ~15 minutes.
+///    running as long as the match is alive (up to 90 minutes).
 async fn resolve_url(api: &Api, match_id: u64, events: &mpsc::Sender<EngineEvent>) -> Option<String> {
     let started = Instant::now();
     let mut spectate_tries = 0u32;
     let mut next_spectate = Instant::now(); // first spectate right away
     let mut quota_gone = false;
-    while started.elapsed() < Duration::from_secs(15 * 60) {
+    while started.elapsed() < Duration::from_secs(90 * 60) {
         if let Ok(Some(u)) = api.listed_broadcast_url(match_id).await {
             return Some(u);
         }
         if !quota_gone && spectate_tries < 3 && Instant::now() >= next_spectate {
             spectate_tries += 1;
+            let (count, reset_secs) = record_spectate_and_quota();
             match api.resolve_broadcast_url(match_id).await {
                 Ok(u) => return Some(u),
                 Err(e) => {
                     let status = e.downcast_ref::<crate::stream::SpectateError>().map(|s| s.status);
-                    quota_gone = status == Some(429);
+                    quota_gone = status == Some(429) || count >= 6;
                     next_spectate = Instant::now() + Duration::from_secs(180);
+                    let reset_msg = if let Some(secs) = reset_secs {
+                        format!(" (reset ±{} mnt lagi)", (secs + 59) / 60)
+                    } else {
+                        String::new()
+                    };
                     let msg = match status {
-                        Some(429) => "Kuota spectate habis (6/jam). Menunggu broadcast muncul di daftar publik…".to_string(),
+                        Some(429) => format!("Kuota spectate habis (6/jam){reset_msg}. Menunggu broadcast di daftar publik…"),
                         Some(s) if s >= 500 => format!("deadlock-api belum bisa spectate (HTTP {s}), coba lagi {}/3 dalam 3 menit…", spectate_tries),
-                        _ => format!("Spectate gagal: {e}"),
+                        _ => {
+                            if quota_gone {
+                                format!("Kuota spectate habis (6/jam){reset_msg}. Menunggu broadcast di daftar publik…")
+                            } else {
+                                format!("Spectate gagal: {e}")
+                            }
+                        }
                     };
                     let _ = events.send(EngineEvent::Status { message: msg }).await;
                 }

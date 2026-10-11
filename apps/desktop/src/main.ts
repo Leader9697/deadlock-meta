@@ -368,6 +368,7 @@ function livePending(owned: number[]) {
 }
 
 let liveRerun = false;
+let lastLiveSuccess = 0;
 async function postLive(force = false) {
   if (!S.live) return;
   if (liveInFlight) {
@@ -400,6 +401,7 @@ async function postLive(force = false) {
         commit: S.commit && S.commit.matchId === S.live.matchId ? { itemId: S.commit.itemId, sinceS: S.commit.sinceS } : null,
       }),
     });
+    lastLiveSuccess = Date.now();
     const t = S.liveResp.gameTimeS;
     S.liveResp.winProbability = smoothWin(S.liveResp.winProbability, t);
     S.liveResp.macro = holdMacro(S.liveResp.macro, t);
@@ -760,9 +762,12 @@ const TIP_ICON: Record<Tip["kind"], string> = {
  */
 function coachCard(r: LiveResp, hud = false) {
   if (S.live?.winningTeam !== undefined) return "";
+  const staleAge = hud ? HUD.staleAgeS : (lastLiveSuccess > 0 && Date.now() - lastLiveSuccess > 15_000 ? Math.round((Date.now() - lastLiveSuccess) / 1000) : null);
+  const staleTag = staleAge != null ? ` <span class="tag muted" style="font-size:9px" title="Data terakhir dari server analitik">${staleAge}s lalu</span>` : "";
+
   if (!r.tips.length) {
     // never an empty box: a blank HUD Coach looks like the widget vanished mid-match
-    return `<section class="coach calm compact${hud ? " hud" : ""}"><div class="coach-main"><span class="coach-ico">✓</span><div class="coach-txt"><b>Farm & ikuti build</b></div></div></section>`;
+    return `<section class="coach calm compact${hud ? " hud" : ""}"><div class="coach-main"><span class="coach-ico">✓</span><div class="coach-txt"><b>Farm & ikuti build${staleTag}</b></div></div></section>`;
   }
   const [main, ...rest] = r.tips;
   const sub = hud
@@ -771,7 +776,7 @@ function coachCard(r: LiveResp, hud = false) {
       ? `<div class="coach-chips">${rest.map((t) => `<span class="chip ${t.kind}" title="${esc(t.detail)}">${TIP_ICON[t.kind]} ${esc(t.title)}</span>`).join("")}</div>`
       : "";
   return `<section class="coach compact ${main.kind}${freshTop ? " fresh" : ""}${hud ? " hud" : ""}">
-    <div class="coach-main"><span class="coach-ico">${TIP_ICON[main.kind]}</span><div class="coach-txt"><b>${esc(main.title)}</b><p title="${esc(main.detail)}">${esc(main.detail)}</p></div></div>${sub}
+    <div class="coach-main"><span class="coach-ico">${TIP_ICON[main.kind]}</span><div class="coach-txt"><b>${esc(main.title)}${staleTag}</b><p title="${esc(main.detail)}">${esc(main.detail)}</p></div></div>${sub}
   </section>`;
 }
 
@@ -1361,6 +1366,8 @@ interface HudExtra {
   team: boolean;
   /** 1–2 pre-game habit lines (HUD Situasi before the match starts) */
   habits: string[];
+  /** stale data age in seconds if live response is old, e.g. server blip */
+  staleAgeS?: number | null;
 }
 interface OverlayData {
   hud: HudExtra;
@@ -1377,10 +1384,12 @@ let webNote = "";
 const GUARDED = new Set(["matchInput", "heroSel"]);
 let lastBroadcast = "";
 function broadcast(force = false) {
+  const now = Date.now();
+  const staleLiveS = lastLiveSuccess > 0 && now - lastLiveSuccess > 15_000 ? Math.round((now - lastLiveSuccess) / 1000) : null;
   const hud: HudExtra = { focus: S.focus, toast: S.toast, pending: S.pending.map((p) => p.name), lag: S.live ? lagSeconds() : BASE_DELAY, winTrend: winTrend(), team: Date.now() < S.teamUntil, habits: summary?.habits?.hudLines ?? [], souls: (() => {
     const m = me();
     return m ? soulsNow(m) : null;
-  })() };
+  })(), staleAgeS: staleLiveS };
   const data: OverlayData = { hud, r: S.liveResp, live: S.live, connected: S.connected, matchId: S.matchId, heroes: [...S.heroes], scout: S.scout };
   const key = JSON.stringify([data.r, data.matchId, data.live?.gameTimeS, data.connected, data.heroes.length, S.scoutKey, hud]);
   if (!force && key === lastBroadcast) return;
@@ -1607,7 +1616,7 @@ document.addEventListener("change", (e) => {
 const WIDGET = new URLSearchParams(location.search).get("widget");
 let editing = false;
 
-let HUD: HudExtra = { focus: false, toast: "", pending: [], lag: BASE_DELAY, winTrend: null, souls: null, team: false, habits: [] };
+let HUD: HudExtra = { focus: false, toast: "", pending: [], lag: BASE_DELAY, winTrend: null, souls: null, team: false, habits: [], staleAgeS: null };
 const LANE_ARROW: Record<string, string> = { "kita tekan": "▲", "kita ditekan": "▼" };
 
 /**
@@ -1659,6 +1668,15 @@ function situasiHud(r: LiveResp) {
     }
     ${r.gamePlan ? `<div class="hud-line">🎯 <b>${esc(r.gamePlan.title)}</b></div>` : ""}
     ${lanes}
+    ${
+      !isBrawl && r.gameTimeS >= 120 && r.gameTimeS <= 660
+        ? (() => {
+            const targetNw = Math.round((r.gameTimeS / 60) * 340);
+            const delta = m.netWorth - targetNw;
+            return `<div class="hud-line small" style="opacity:.9">🎯 Laning Pace: target <b>${k(targetNw)}</b> · kamu <b class="${delta >= 0 ? "win" : "loss"}">${k(m.netWorth)}</b> <span class="${delta >= 0 ? "win" : "loss"}">(${delta >= 0 ? "+" : "−"}${k(Math.abs(delta))})</span></div>`;
+          })()
+        : ""
+    }
     ${teamLine()}
   </section>`;
 }

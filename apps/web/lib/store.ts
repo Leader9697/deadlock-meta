@@ -18,18 +18,28 @@ export async function saveMatchLog(log: MatchLog): Promise<void> {
   await fs.rename(tmp, file);
 }
 
-export async function listMatchLogs(accountId?: number): Promise<MatchLog[]> {
+export async function listMatchLogs(accountId?: number, limit = 50): Promise<MatchLog[]> {
   let names: string[] = [];
   try {
     names = (await fs.readdir(dir())).filter((n) => n.endsWith(".json"));
   } catch {
     return [];
   }
+  // Newer matches have higher numeric matchIds: sort descending first so we only read the newest N files
+  names.sort((a, b) => {
+    const idA = parseInt(a.replace(".json", ""), 10) || 0;
+    const idB = parseInt(b.replace(".json", ""), 10) || 0;
+    return idB - idA;
+  });
+  const targetNames = names.slice(0, Math.max(limit * 2, 100));
   const out: MatchLog[] = [];
-  for (const n of names) {
+  for (const n of targetNames) {
     try {
       const l = JSON.parse(await fs.readFile(path.join(dir(), n), "utf8")) as MatchLog;
-      if (!accountId || l.accountId === accountId) out.push(l);
+      if (!accountId || l.accountId === accountId) {
+        out.push(l);
+        if (out.length >= limit) break;
+      }
     } catch {
       // ignore broken files
     }

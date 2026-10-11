@@ -42,14 +42,36 @@ const PLAYER: FetchInit = { next: { revalidate: 120 } };
  * re-downloaded them. Failed loads are not kept. Lives on globalThis so dev reloads
  * don't drop it.
  */
-type MemoEntry = { at: number; p: Promise<unknown> };
+type MemoEntry = { at: number; p: Promise<unknown>; lastGood?: unknown };
 const MEMO: Map<string, MemoEntry> = ((globalThis as Record<string, unknown>).__dlMemo ??= new Map()) as Map<string, MemoEntry>;
 export function memo<T>(key: string, ttlMs: number, load: () => Promise<T>): Promise<T> {
   const hit = MEMO.get(key);
   if (hit && Date.now() - hit.at < ttlMs) return hit.p as Promise<T>;
-  const p = load();
-  MEMO.set(key, { at: Date.now(), p });
-  p.catch(() => MEMO.get(key)?.p === p && MEMO.delete(key));
+  const rawP = load();
+  const p = rawP
+    .then((val) => {
+      const entry = MEMO.get(key);
+      if (entry && entry.p === p) {
+        entry.lastGood = val;
+      }
+      return val;
+    })
+    .catch((err) => {
+      const entry = MEMO.get(key);
+      if (entry && entry.p === p) {
+        if (entry.lastGood !== undefined) {
+          // Stale-while-error: serve last good result, retry in 60s
+          console.warn(`[memo:${key}] refresh failed, serving stale cache:`, err);
+          entry.at = Date.now() - ttlMs + 60_000;
+          entry.p = Promise.resolve(entry.lastGood);
+          return entry.lastGood as T;
+        }
+        MEMO.delete(key);
+      }
+      throw err;
+    });
+
+  MEMO.set(key, { at: Date.now(), p, lastGood: hit?.lastGood });
   return p;
 }
 const ASSET_TTL = 3600_000;
