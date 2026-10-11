@@ -49,8 +49,10 @@ interface Settings {
 interface MetaHero { heroId: number; name: string; icon?: string; winrate: number; tier: string }
 interface HeroInfo {
   hero: { id: number; name: string };
+  meta?: MetaHero | null;
   phases: { phases: Record<"early" | "mid" | "late", { winrate: number; matches: number }>; peak: string | null; scaling: number } | null;
   builds: { id: number; name: string; winrate: number; matches: number }[];
+  itemsByTier?: Record<string, { id: number; name: string; slot: "weapon" | "vitality" | "spirit"; winrate: number; delta: number; avgBuyTimeS?: number }[]>;
 }
 interface Buy { id: number; name: string; tier: number; cost: number | null; slot: "weapon" | "vitality" | "spirit"; score: number; affordable: boolean; reason: string }
 interface LiveResp {
@@ -111,9 +113,21 @@ const ARCH_NAME: Record<string, string> = { sustain: "SUSTAIN", tank: "TANK", sl
 interface ScoutResp { players: { accountId: number; heroId?: number; team?: number; scout: PlayerScout | null }[] }
 
 type Tab = "now" | "enemies" | "items" | "deaths" | "hero";
+type LauncherTab = "home" | "live" | "roster" | "meta" | "profile" | "settings";
 
 // ---------- state ----------
 const S = {
+  launcherTab: "home" as LauncherTab,
+  selectedRosterHero: null as number | null,
+  rosterSearch: "",
+  rosterRoleFilter: "all" as "all" | "s" | "a",
+  isAlwaysOnTop: (() => {
+    try {
+      return localStorage.getItem("dlm_pin") === "1";
+    } catch {
+      return false;
+    }
+  })(),
   settings: null as Settings | null,
   game: false,
   matchId: null as number | null,
@@ -655,6 +669,7 @@ function onEngine(ev: EngineEvent) {
       break;
     case "match-detected":
       Object.assign(S, { matchId: ev.match_id, matchSource: ev.source, connected: false, ended: false, live: null, liveResp: null, error: "", note: "", leadHistory: [] });
+      if (S.launcherTab === "home") S.launcherTab = "live";
       break;
     case "status":
       S.note = ev.message;
@@ -665,6 +680,7 @@ function onEngine(ev: EngineEvent) {
     case "live-connected":
       S.connected = true;
       S.note = "";
+      if (S.launcherTab === "home") S.launcherTab = "live";
       break;
     case "live-state": {
       lastStateAt = Date.now();
@@ -675,6 +691,7 @@ function onEngine(ev: EngineEvent) {
       const prevDead = S.live?.players.filter((p) => p.dead).length;
       S.live = state;
       S.connected = true;
+      if (S.launcherTab === "home") S.launcherTab = "live";
       const m = me();
       if (m?.heroId) void loadHero(m.heroId);
       if (state.players.length >= 2) {
@@ -717,7 +734,24 @@ function onEngine(ev: EngineEvent) {
 
 // ---------- rendering ----------
 function renderStatus() {
-  $("dot").className = "dot" + (S.connected ? " live" : S.game ? " on" : "");
+  const dot = $("dot");
+  if (dot) dot.className = "dot" + (S.connected ? " live" : S.game ? " on" : "");
+  const tickerDot = document.querySelector<HTMLElement>(".ticker-dot");
+  if (tickerDot) tickerDot.className = "ticker-dot" + (S.connected ? " live" : S.game ? " on" : "");
+
+  document.querySelectorAll<HTMLElement>("#launcherNav .nav-tab").forEach((btn) => {
+    btn.classList.toggle("on", btn.dataset.launcherTab === S.launcherTab);
+  });
+  const livePill = document.getElementById("livePill");
+  if (livePill) {
+    livePill.style.display = S.connected || (S.matchId != null && S.live != null) ? "inline-block" : "none";
+  }
+  const pinBtn = document.getElementById("pin");
+  if (pinBtn) {
+    pinBtn.classList.toggle("active", S.isAlwaysOnTop);
+    pinBtn.title = S.isAlwaysOnTop ? "Sematkan aktif (Always on top)" : "Sematkan di atas layar (Always on top)";
+  }
+
   let html: string;
   if (S.connected && S.live) {
     const stale = staleSeconds();
@@ -732,7 +766,7 @@ function renderStatus() {
   } else if (S.matchId) {
     html = `Match <b>#${S.matchId}</b> (${esc(S.matchSource)}) · menyambung ke broadcast…`;
   } else if (S.game) {
-    html = "Deadlock jalan · menunggu match";
+    html = "Deadlock jalan · siap & memantau match";
   } else {
     html = S.force ? "Mode manual · menunggu match" : "Menunggu Deadlock… <span class=\"small\">(exe belum terdeteksi · lihat Status koneksi)</span>";
   }
@@ -743,12 +777,15 @@ function renderStatus() {
     html += ` · <b>selesai</b>`;
   }
   if (S.note && !S.connected) html += `<br><span class="small">${esc(S.note)}</span>`;
-  $("status").innerHTML = html;
+  const st = $("status");
+  if (st) st.innerHTML = html;
   const vb = document.getElementById("voice");
   if (vb) vb.textContent = S.voice ? "🔊" : "🔇";
   const mode = $("mode");
-  mode.textContent = S.clickThrough ? "klik-tembus" : "interaktif";
-  mode.className = "mode" + (S.clickThrough ? " through" : "");
+  if (mode) {
+    mode.textContent = S.clickThrough ? "klik-tembus" : "interaktif";
+    mode.className = "mode" + (S.clickThrough ? " through" : "");
+  }
 }
 
 const TIP_ICON: Record<Tip["kind"], string> = {
@@ -1151,35 +1188,7 @@ function itemsCard(r: LiveResp) {
 function heroCard() {
   const h = S.heroInfo;
   if (!h) return `<div class="empty">Pilih hero di bawah untuk melihat build.</div>`;
-  const ph = h.phases;
-  const phaseHtml = ph
-    ? `<div class="phases">${(["early", "mid", "late"] as const)
-        .map((p) => `<div class="${ph.peak === p ? "peak" : ""}"><span class="small muted">${p.toUpperCase()}</span><b class="${wrCls(ph.phases[p].winrate)}">${pct(ph.phases[p].winrate)}</b></div>`)
-        .join("")}</div>
-       <p class="small muted" style="margin:6px 0 0">${
-         ph.scaling > 0.02 ? "Scaling: main aman, menang di late." : ph.scaling < -0.02 ? "Fall-off: tekan objektif sebelum ±28 mnt." : "Stabil di semua fase."
-       }</p>`
-    : "";
-  const builds = h.builds.length
-    ? `<div class="row small muted" style="justify-content:space-between;margin-bottom:6px;padding:0 4px;font-size:11px">
-        <span style="flex:1">NAMA BUILD</span>
-        <span style="width:70px;text-align:right">WIN RATE</span>
-        <span style="width:65px;text-align:right">SAMPEL</span>
-        <span style="width:75px;text-align:right">KODE BUILD</span>
-      </div>` +
-      h.builds
-        .map(
-          (b) => `<div class="row" style="align-items:center;padding:4px 0">
-            <span class="name" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(b.name)}">${esc(b.name)}</span>
-            <span class="small ${wrCls(b.winrate)}" style="width:70px;text-align:right;font-weight:bold" title="Win Rate build">${pct(b.winrate)}</span>
-            <span class="small muted" style="width:65px;text-align:right" title="Jumlah match yang memakai build ini">${b.matches.toLocaleString()} match</span>
-            <span style="width:75px;text-align:right"><button class="copy" data-copy="${b.id}" title="Klik untuk copy ID build ke game Deadlock">ID ${b.id}</button></span>
-          </div>`,
-        )
-        .join("")
-    : `<div class="empty">Belum ada build dengan sampel cukup.</div>`;
-  return `<section class="card"><h3><span class="row">${heroIcon(h.hero.id, "ico sm")} ${esc(h.hero.name)}</span> <small>winrate per durasi match</small></h3>${phaseHtml}</section>
-  <section class="card"><h3>Build Terbaik Komunitas <small>Pilih & Copy ID ke Deadlock</small></h3>${builds}</section>`;
+  return renderHeroDossierBody(h);
 }
 
 const DEADLOCK_APP = 1422450;
@@ -1381,7 +1390,7 @@ interface OverlayData {
 /** why the bundled site is not reachable (from the Rust side), shown in Status koneksi */
 let webNote = "";
 /** form controls that must not be re-rendered while they have focus */
-const GUARDED = new Set(["matchInput", "heroSel"]);
+const GUARDED = new Set(["matchInput", "heroSel", "rosterSearchInput"]);
 let lastBroadcast = "";
 function broadcast(force = false) {
   const now = Date.now();
@@ -1397,43 +1406,306 @@ function broadcast(force = false) {
   void emit("overlay-data", data);
 }
 
-function render() {
-  if (WIDGET) return renderWidget();
-  broadcast();
-  renderStatus();
-  const r = S.liveResp;
-  const parts: string[] = [];
-  if (S.error) {
-    parts.push(`<div class="err" title="${esc(S.error)}">${esc(S.error.length > 240 ? S.error.slice(0, 240) + "…" : S.error)}</div>`);
+function renderHeroDossierBody(h: HeroInfo) {
+  const ph = h.phases;
+  const phaseHtml = ph
+    ? `<div class="phases">${(["early", "mid", "late"] as const)
+        .map((p) => `<div class="${ph.peak === p ? "peak" : ""}"><span class="small muted">${p.toUpperCase()}</span><b class="${wrCls(ph.phases[p].winrate)}">${pct(ph.phases[p].winrate)}</b></div>`)
+        .join("")}</div>
+       <p class="small muted" style="margin:6px 0 0">${
+         ph.scaling > 0.02 ? "📈 Scaling kuat: peluang menang meningkat di late game." : ph.scaling < -0.02 ? "⚡ Early pressure: kuat di awal, tekan objektif sebelum ±28 menit." : "⚖ Stabil seimbang di semua fase durasi match."
+       }</p>`
+    : "";
+  const builds = h.builds.length
+    ? `<div class="row small muted" style="justify-content:space-between;margin-bottom:6px;padding:0 4px;font-size:11px">
+        <span style="flex:1">NAMA BUILD</span>
+        <span style="width:70px;text-align:right">WIN RATE</span>
+        <span style="width:65px;text-align:right">SAMPEL</span>
+        <span style="width:75px;text-align:right">KODE BUILD</span>
+      </div>` +
+      h.builds
+        .map(
+          (b) => `<div class="row" style="align-items:center;padding:4px 0">
+            <span class="name" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(b.name)}">${esc(b.name)}</span>
+            <span class="small ${wrCls(b.winrate)}" style="width:70px;text-align:right;font-weight:bold" title="Win Rate build">${pct(b.winrate)}</span>
+            <span class="small muted" style="width:65px;text-align:right" title="Jumlah match yang memakai build ini">${b.matches.toLocaleString()} match</span>
+            <span style="width:75px;text-align:right"><button class="copy" data-copy="${b.id}" title="Klik untuk copy ID build ke game Deadlock">ID ${b.id}</button></span>
+          </div>`,
+        )
+        .join("")
+    : `<div class="empty">Belum ada build dengan sampel cukup.</div>`;
+
+  let itemsTierHtml = "";
+  if (h.itemsByTier && Object.keys(h.itemsByTier).length) {
+    itemsTierHtml = `<section class="card">
+      <h3>Item Unggulan Per Tier <small>Berdasarkan Winrate Delta</small></h3>
+      ${Object.entries(h.itemsByTier)
+        .map(([tierNum, items]) => `
+          <div style="margin-top:6px">
+            <span class="small muted" style="font-weight:700">TIER ${tierNum}</span>
+            <div class="items-tier-grid">
+              ${items
+                .slice(0, 4)
+                .map((it) => `
+                <div class="item-badge-pill" title="${esc(it.name)} · Winrate ${pct(it.winrate, 1)} (${delta(it.delta)})">
+                  <span class="ico sm ${SLOT_CLS[it.slot] ?? ""}" style="background:currentColor;opacity:.2"></span>
+                  <span class="item-name ${SLOT_CLS[it.slot] ?? ""}">${esc(it.name)}</span>
+                  <span class="small ${it.delta >= 0 ? "win" : "loss"}" style="font-size:10px">${delta(it.delta)}</span>
+                </div>
+              `)
+                .join("")}
+            </div>
+          </div>
+        `)
+        .join("")}
+    </section>`;
   }
-  if (r && me()) {
-    parts.push(coachCard(r));
-    parts.push(
-      `<nav class="tabs main-tabs">${(
-        [
-          ["now", "Sekarang"],
-          ["enemies", "Lawan"],
-          ["items", "Item"],
-          ["deaths", `Mati${r.deaths?.reviews.length ? ` (${r.deaths.patterns.deaths})` : ""}`],
-          ["hero", "Hero"],
-        ] as const
-      )
-        .map(([t, l]) => `<button data-tab="${t}" class="${S.tab === t ? "on" : ""}">${l}</button>`)
-        .join("")}</nav>`,
-    );
-    if (S.tab === "now") parts.push(planCard(r), buildPathCard(r), comboCard(r), abilityCard(r), winCard(r), readCard(r));
-    if (S.tab === "enemies") parts.push(teamHtml(false), enemiesCard(r));
-    if (S.tab === "items") parts.push(ownedPlaysCard(r), itemsCard(r));
-    if (S.tab === "deaths") parts.push(deathsCard(r));
-    if (S.tab === "hero") parts.push(heroCard(), profileCard());
-    parts.push(`
-      <div class="row" style="gap:6px;margin-top:6px;align-items:center">
+
+  return `<section class="card"><h3>Kurva Scaling Match <small>Winrate per fase</small></h3>${phaseHtml}</section>
+  <section class="card"><h3>Build Komunitas <small>Pilih & Copy ID ke Deadlock</small></h3>${builds}</section>
+  ${itemsTierHtml}`;
+}
+
+function renderRosterView() {
+  const heroesList = [...S.heroes.values()].sort((a, b) => b.winrate - a.winrate);
+  if (!S.selectedRosterHero && heroesList.length) {
+    S.selectedRosterHero = S.pregameHero ?? heroesList[0].heroId;
+    void loadHero(S.selectedRosterHero);
+  }
+  const q = S.rosterSearch.toLowerCase().trim();
+  const filtered = heroesList.filter((h) => {
+    if (q && !h.name.toLowerCase().includes(q)) return false;
+    if (S.rosterRoleFilter === "s" && h.tier !== "S") return false;
+    if (S.rosterRoleFilter === "a" && h.tier !== "A" && h.tier !== "S") return false;
+    return true;
+  });
+  const selHero = S.heroes.get(S.selectedRosterHero ?? 0);
+  const hInfo = S.heroInfo && S.heroInfo.hero.id === S.selectedRosterHero ? S.heroInfo : null;
+
+  return `<div class="roster-view">
+    <div class="roster-toolbar">
+      <div class="roster-search">
+        <span class="muted">🔍</span>
+        <input id="rosterSearchInput" placeholder="Cari nama hero..." value="${esc(S.rosterSearch)}">
+      </div>
+      <div class="role-filters">
+        <button class="role-filter-btn ${S.rosterRoleFilter === "all" ? "on" : ""}" data-roster-filter="all">SEMUA (${heroesList.length})</button>
+        <button class="role-filter-btn ${S.rosterRoleFilter === "s" ? "on" : ""}" data-roster-filter="s">TIER S</button>
+        <button class="role-filter-btn ${S.rosterRoleFilter === "a" ? "on" : ""}" data-roster-filter="a">TIER S & A</button>
+      </div>
+    </div>
+    <div class="roster-split">
+      <div class="hero-roster-grid">
+        ${filtered
+          .map((h) => {
+            const isSel = h.heroId === S.selectedRosterHero;
+            const tierCls = `tier-badge-${h.tier.toLowerCase()}`;
+            return `<div class="agent-card ${isSel ? "selected" : ""}" data-select-roster="${h.heroId}">
+              <span class="agent-tier-badge ${tierCls}">${esc(h.tier)}</span>
+              ${heroIcon(h.heroId, "ico")}
+              <div class="agent-name">${esc(h.name)}</div>
+              <div class="agent-stats">
+                <b class="${wrCls(h.winrate)}">${pct(h.winrate, 1)}</b>
+              </div>
+            </div>`;
+          })
+          .join("")}
+      </div>
+      <div class="hero-dossier-panel">
+        ${
+          selHero
+            ? `
+          <div class="hero-dossier-header">
+            ${heroIcon(selHero.heroId, "ico")}
+            <div class="hero-dossier-info">
+              <div class="row" style="align-items:center;gap:8px">
+                <h2>${esc(selHero.name)}</h2>
+                <span class="agent-tier-badge tier-badge-${selHero.tier.toLowerCase()}" style="position:static;font-size:11px;padding:2px 6px">${esc(selHero.tier)}-TIER</span>
+              </div>
+              <div class="hero-dossier-meta">
+                <span>Winrate Meta: <b class="${wrCls(selHero.winrate)}">${pct(selHero.winrate, 1)}</b></span>
+              </div>
+              <button class="hero-pregame-btn ${S.pregameHero === selHero.heroId ? "active" : ""}" data-hero-pick="${selHero.heroId}">
+                ${S.pregameHero === selHero.heroId ? "✓ Hero Pre-Game Terpilih" : "🎯 Kunci Sebagai Hero Pre-Game"}
+              </button>
+            </div>
+          </div>
+          ${hInfo ? renderHeroDossierBody(hInfo) : `<div class="card"><div class="empty">Memuat detail & build hero…</div></div>`}
+        `
+            : `<div class="card"><div class="empty">Pilih hero dari daftar di sebelah kiri</div></div>`
+        }
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderMetaView() {
+  const heroesList = [...S.heroes.values()];
+  const tiers = [
+    { tier: "S", title: "S-TIER &bull; Overperforming Meta", cls: "tier-badge-s", filter: (h: MetaHero) => h.tier === "S" },
+    { tier: "A", title: "A-TIER &bull; Pilihan Solid & Konsisten", cls: "tier-badge-a", filter: (h: MetaHero) => h.tier === "A" },
+    { tier: "B", title: "B-TIER &bull; Seimbang / Situasional", cls: "tier-badge-b", filter: (h: MetaHero) => h.tier === "B" },
+    { tier: "C", title: "C-TIER &bull; Butuh Eksekusi Spesifik", cls: "tier-badge-c", filter: (h: MetaHero) => h.tier === "C" },
+    { tier: "D", title: "D-TIER &bull; Underperforming", cls: "tier-badge-d", filter: (h: MetaHero) => h.tier === "D" },
+  ];
+  return `<div class="meta-tier-list">
+    <div class="card" style="padding:10px 14px">
+      <h3 style="margin:0">Tier List Meta Deadlock <small>Diperbarui dari deadlock-api & agregat match publik</small></h3>
+      <p class="muted small" style="margin:4px 0 0">Klik kartu hero untuk langsung melihat analisis build, fase scaling, dan item kunci di Hero Roster.</p>
+    </div>
+    ${tiers
+      .map(({ tier, title, cls, filter }) => {
+        const group = heroesList.filter(filter).sort((a, b) => b.winrate - a.winrate);
+        if (!group.length) return "";
+        return `<div class="meta-tier-group">
+          <div class="meta-tier-head">
+            <div class="row" style="align-items:center;gap:8px">
+              <span class="meta-tier-tag ${cls}">${tier}</span>
+              <span style="font-weight:700;font-size:13px">${title}</span>
+            </div>
+            <span class="small muted">${group.length} Hero</span>
+          </div>
+          <div class="meta-tier-strip">
+            ${group
+              .map(
+                (h) => `
+              <div class="meta-hero-pill" data-select-roster="${h.heroId}" title="Klik untuk inspect ${esc(h.name)}">
+                ${heroIcon(h.heroId, "ico sm")}
+                <span class="name">${esc(h.name)}</span>
+                <span class="small ${wrCls(h.winrate)}" style="font-weight:700">${pct(h.winrate, 1)}</span>
+              </div>
+            `,
+              )
+              .join("")}
+          </div>
+        </div>`;
+      })
+      .join("")}
+  </div>`;
+}
+
+function renderLastMatchCard(pm: { matchId: number; won: boolean; durationS: number; netWorth: number; kda: string }) {
+  return `<section class="card" style="border:1px solid ${pm.won ? "var(--win)" : "var(--loss)"};background:rgba(${pm.won ? "74,222,128" : "248,113,113"},0.08)">
+    <h3>Ringkasan Match Terakhir <small>Match #${pm.matchId}</small></h3>
+    <div class="row" style="justify-content:space-between;margin-top:4px">
+      <span style="font-size:16px;font-weight:bold;color:${pm.won ? "var(--win)" : "var(--loss)"}">${pm.won ? "VICTORY (MENANG) 🎉" : "DEFEAT (KALAH)"}</span>
+      <span class="small muted">Durasi: ${formatClock(pm.durationS)}</span>
+    </div>
+    <div class="row small" style="margin-top:6px;gap:12px">
+      <span>Souls Akhir: <b>${k(pm.netWorth)}</b></span>
+      <span>K/D/A: <b>${esc(pm.kda)}</b></span>
+    </div>
+  </section>`;
+}
+
+function renderProfileView() {
+  return `<div class="home-dashboard">
+    ${S.postMatchSummary ? renderLastMatchCard(S.postMatchSummary) : ""}
+    ${summaryCard()}
+    ${profileCard()}
+  </div>`;
+}
+
+function renderSettingsView() {
+  return `<div class="home-dashboard">
+    <section class="card">
+      <h3>Pengaturan In-Game HUD Widget <small>Widget transparan di monitor game</small></h3>
+      <div class="small muted" style="margin-bottom:8px">Aktifkan atau sembunyikan 4 widget HUD yang melayang di atas layar game Deadlock:</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <label class="row small"><input type="checkbox" data-widget-toggle="coach" ${S.layout?.widgets?.coach?.enabled ?? true ? "checked" : ""}> <b>Coach Taktis</b> (Tengah Atas)</label>
+        <label class="row small"><input type="checkbox" data-widget-toggle="win" ${S.layout?.widgets?.win?.enabled ?? true ? "checked" : ""}> <b>Situasi / Win%</b> (Kiri Atas)</label>
+        <label class="row small"><input type="checkbox" data-widget-toggle="enemies" ${S.layout?.widgets?.enemies?.enabled ?? true ? "checked" : ""}> <b>Target Lawan</b> (Kiri Tengah)</label>
+        <label class="row small"><input type="checkbox" data-widget-toggle="buy" ${S.layout?.widgets?.buy?.enabled ?? true ? "checked" : ""}> <b>Saran Beli Item</b> (Kanan)</label>
+      </div>
+      <div class="row" style="margin-top:12px;gap:8px">
+        <button class="btn" id="hudEdit">📐 Atur Posisi HUD (Ctrl+Shift+E)</button>
+        <button class="copy" id="hudReset">Reset ke Posisi Standar</button>
+      </div>
+    </section>
+    <section class="card">
+      <h3>Suara & Audio Coach <small>Synthesized tactical cues</small></h3>
+      <div class="row" style="align-items:center;gap:12px;margin-bottom:8px">
+        <button class="copy ${S.voice ? "ok" : ""}" id="voiceToggle">Suara Coach: ${S.voice ? "🔊 AKTIF" : "🔇 MATI"}</button>
+        <span class="small muted">Callout audio real-time saat Mid-Boss spawn, gank, dan instruksi push/retreat.</span>
+      </div>
+      <div class="row" style="gap:6px;align-items:center;flex-wrap:wrap">
+        <span class="small muted">Uji Coba Nada Chime:</span>
+        <button class="copy" data-test-chime="info">Tes Normal</button>
+        <button class="copy" data-test-chime="alert">Tes Alert</button>
+        <button class="copy" data-test-chime="boss">Tes Mid-Boss</button>
+        <button class="copy" data-test-chime="retreat">Tes Retreat</button>
+      </div>
+    </section>
+    ${connectionCard()}
+  </div>`;
+}
+
+function renderLiveStandby() {
+  const heroPick = S.pregameHero ? S.heroes.get(S.pregameHero) : null;
+  return `<div class="war-room-view">
+    <section class="card" style="text-align:center;padding:24px 16px;background:linear-gradient(180deg, rgba(20,24,36,0.95) 0%, rgba(13,15,21,0.95) 100%)">
+      <div style="font-size:36px;margin-bottom:8px">⚔️</div>
+      <h2 style="margin:0;font:800 22px 'Barlow Condensed', sans-serif;letter-spacing:.05em;color:var(--brass)">RUANG TAKTIS LIVE COACH</h2>
+      <p class="muted" style="max-width:540px;margin:8px auto 14px">
+        ${S.matchId ? `Match <b>#${S.matchId}</b> terdeteksi (${esc(S.matchSource)}) &bull; Menghubungkan ke broadcast spectate Valve…` : S.game ? "Deadlock sedang berjalan. Masuk ke match untuk mengaktifkan analisis live war-room otomatis." : "Deadlock belum terdeteksi. Buka game Deadlock atau gunakan tombol di bawah."}
+      </p>
+      <div class="row" style="justify-content:center;gap:10px">
+        <button class="btn" data-launcher-tab="roster">Jelajahi Hero Roster & Build ↗</button>
+        <button class="copy" id="hudEdit">📐 Atur Posisi Widget HUD</button>
+      </div>
+    </section>
+    ${S.scout?.players.length ? scoutLobbyCard() : ""}
+    ${heroPick ? `<section class="card"><h3>Hero Pilihan Pre-Game: ${heroIcon(heroPick.heroId, "ico sm")} ${esc(heroPick.name)}</h3>${heroCard()}</section>` : heroPickCard()}
+    <details class="diag-details">
+      <summary><span style="font-size:11px">Ganti / Sambung Match ID Manual</span><span style="font-size:9px">▼</span></summary>
+      <div class="diag-content" style="padding-top:6px">
+        <div class="row" style="gap:6px">
+          <input id="matchInput" class="small" placeholder="Masukkan Match ID angka" inputmode="numeric" style="flex:1" value="${esc(S.matchDraft)}">
+          <button class="copy" id="matchGo">Terapkan Match ID</button>
+        </div>
+      </div>
+    </details>
+  </div>`;
+}
+
+function renderLiveWarRoomView(r: LiveResp | null) {
+  if (!r || !me()) {
+    return renderLiveStandby();
+  }
+  return `<div class="war-room-view">
+    <div class="war-room-top">
+      ${coachCard(r)}
+    </div>
+    <div class="war-room-grid">
+      <!-- Col 1: Macro & Win% -->
+      <div class="war-col">
+        ${winCard(r)}
+        ${planCard(r)}
+        ${abilityCard(r)}
+        ${comboCard(r)}
+      </div>
+      <!-- Col 2: Threat Matrix & 6v6 Intel -->
+      <div class="war-col">
+        ${enemiesCard(r)}
+        ${teamHtml(false)}
+        ${deathsCard(r)}
+      </div>
+      <!-- Col 3: Adaptive Build Path & Shop -->
+      <div class="war-col">
+        ${buildPathCard(r)}
+        ${itemsCard(r)}
+        ${ownedPlaysCard(r)}
+        ${readCard(r)}
+      </div>
+    </div>
+    <div class="card" style="margin-top:4px">
+      <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap">
         <button class="copy" id="hudEdit">📐 Atur Posisi HUD (Ctrl+Shift+E)</button>
-        <button class="copy" id="hudReset">Reset Posisi</button>
+        <button class="copy" id="hudReset">Reset Posisi HUD</button>
         <span style="flex:1"></span>
         <button class="copy" id="matchStop" style="color:var(--loss)">Stop Match</button>
       </div>
-      <details class="diag-details" style="margin-top:4px">
+      <details class="diag-details" style="margin-top:6px">
         <summary><span style="font-size:11px">Ganti Match ID Manual (Hanya jika perlu)</span><span style="font-size:9px">▼</span></summary>
         <div class="diag-content" style="padding-top:4px">
           <div class="row" style="gap:6px">
@@ -1442,54 +1714,145 @@ function render() {
           </div>
         </div>
       </details>
-    `);
-  } else {
-    if (S.postMatchSummary) {
-      const pm = S.postMatchSummary;
-      parts.push(`<section class="card" style="border:1px solid ${pm.won ? "var(--win)" : "var(--loss)"};background:rgba(${pm.won ? "103,194,127" : "226,103,92"},0.08)">
-        <h3>Ringkasan Match Terakhir <small>Match #${pm.matchId}</small></h3>
-        <div class="row" style="justify-content:space-between;margin-top:4px">
-          <span style="font-size:16px;font-weight:bold;color:${pm.won ? "var(--win)" : "var(--loss)"}">${pm.won ? "MENANG (VICTORY) 🎉" : "KALAH (DEFEAT)"}</span>
-          <span class="small muted">Durasi: ${formatClock(pm.durationS)}</span>
+    </div>
+  </div>`;
+}
+
+function renderHomeView() {
+  const preHero = S.pregameHero ? S.heroes.get(S.pregameHero) : [...S.heroes.values()][0];
+  return `<div class="home-dashboard">
+    <div class="home-spotlight">
+      <div class="home-spotlight-hero">
+        ${preHero ? heroIcon(preHero.heroId, "ico") : `<span class="ico">🎮</span>`}
+        <div>
+          <div class="row" style="align-items:center;gap:6px">
+            <span class="tag ${preHero ? `tier-badge-${preHero.tier.toLowerCase()}` : ""}">HERO PILIHAN PRE-GAME</span>
+            <span class="small muted">${S.game ? "🎮 Deadlock Aktif" : "Menunggu Game"}</span>
+          </div>
+          <h2>${esc(preHero?.name ?? "Pilih Hero")}</h2>
+          <div class="small muted">
+            Winrate Meta: <b class="${wrCls(preHero?.winrate ?? 0.5)}">${pct(preHero?.winrate ?? 0.5, 1)}</b> &bull; Tier ${esc(preHero?.tier ?? "-")}
+          </div>
         </div>
-        <div class="row small" style="margin-top:6px;gap:12px">
-          <span>Souls Akhir: <b>${k(pm.netWorth)}</b></span>
-          <span>K/D/A: <b>${esc(pm.kda)}</b></span>
-        </div>
-      </section>`);
-    }
-    if (S.live && !r) parts.push(`<section class="card"><div class="empty">Menghitung…</div></section>`);
-    parts.push(connectionCard());
-    parts.push(summaryCard());
-    parts.push(scoutLobbyCard());
-    if (S.heroInfo) parts.push(heroCard());
-    if (!S.connected) parts.push(heroPickCard());
-    parts.push(profileCard());
+      </div>
+      <div class="row" style="gap:8px">
+        <button class="btn" data-launcher-tab="roster">Ganti Hero / Lihat Build ↗</button>
+        ${S.connected || (S.matchId && S.live) ? `<button class="btn" data-launcher-tab="live" style="background:var(--riot-red);color:#fff">Masuk Live Coach ⚔</button>` : ""}
+      </div>
+    </div>
+    <div class="home-grid">
+      <div>
+        ${S.postMatchSummary ? renderLastMatchCard(S.postMatchSummary) : ""}
+        ${summaryCard()}
+      </div>
+      <div>
+        ${S.scout?.players.length ? scoutLobbyCard() : ""}
+        <section class="card">
+          <h3>Pintasan Keyboard Dalam Game <small>Akses instan saat main</small></h3>
+          <div style="display:flex;flex-direction:column;gap:6px;margin-top:6px">
+            <div class="row small"><kbd>Ctrl+Shift+D</kbd> <span class="name">Buka / Tutup Launcher</span></div>
+            <div class="row small"><kbd>Ctrl+Shift+E</kbd> <span class="name">Mode Geser Posisi HUD Transparan</span></div>
+            <div class="row small"><kbd>Ctrl+Shift+B</kbd> <span class="name">Tandai Item #1 Sudah Dibeli</span></div>
+            <div class="row small"><kbd>Ctrl+Shift+H</kbd> <span class="name">Mode Fokus HUD (Hanya Coach + Beli)</span></div>
+            <div class="row small"><kbd>Ctrl+Shift+T</kbd> <span class="name">Intip Roster Tim Lawan (10 detik)</span></div>
+            <div class="row small"><kbd>Ctrl+Shift+F</kbd> <span class="name">Mode Klik-Tembus Interaktif</span></div>
+          </div>
+        </section>
+        ${connectionCard()}
+      </div>
+    </div>
+  </div>`;
+}
+
+function render() {
+  if (WIDGET) return renderWidget();
+  broadcast();
+  renderStatus();
+  const r = S.liveResp;
+  let viewContent = "";
+  if (S.launcherTab === "home") {
+    viewContent = renderHomeView();
+  } else if (S.launcherTab === "live") {
+    viewContent = renderLiveWarRoomView(r);
+  } else if (S.launcherTab === "roster") {
+    viewContent = renderRosterView();
+  } else if (S.launcherTab === "meta") {
+    viewContent = renderMetaView();
+  } else if (S.launcherTab === "profile") {
+    viewContent = renderProfileView();
+  } else if (S.launcherTab === "settings") {
+    viewContent = renderSettingsView();
   }
-  // don't wipe the Match ID box / the open hero dropdown (a re-render closes it at once); render again on blur
+
+  // don't wipe form controls while focused
   if (GUARDED.has((document.activeElement as HTMLElement | null)?.id ?? "")) {
     pendingRender = true;
     return;
   }
   const viewEl = $("view");
   const prevViewScroll = viewEl.scrollTop;
-  const stripEl = document.getElementById("heroAvatarStrip");
-  const prevStripScroll = stripEl ? stripEl.scrollTop : null;
+  const errBanner = S.error ? `<div class="err" style="margin-bottom:8px" title="${esc(S.error)}">${esc(S.error.length > 240 ? S.error.slice(0, 240) + "…" : S.error)}</div>` : "";
 
-  viewEl.innerHTML = fatalHtml() + updateCard() + parts.join("");
+  viewEl.innerHTML = fatalHtml() + updateCard() + errBanner + viewContent;
 
   if (prevViewScroll > 0) {
     viewEl.scrollTop = prevViewScroll;
-  }
-  if (prevStripScroll !== null) {
-    const newStripEl = document.getElementById("heroAvatarStrip");
-    if (newStripEl) newStripEl.scrollTop = prevStripScroll;
   }
 }
 
 // ---------- UI events (delegated) ----------
 document.addEventListener("click", async (e) => {
   const t = e.target as HTMLElement;
+  const launcherTab = t.closest<HTMLElement>("[data-launcher-tab]");
+  if (launcherTab) {
+    S.launcherTab = launcherTab.dataset.launcherTab as LauncherTab;
+    render();
+    return;
+  }
+  const selectRoster = t.closest<HTMLElement>("[data-select-roster]");
+  if (selectRoster) {
+    const id = Number(selectRoster.dataset.selectRoster);
+    if (id) {
+      S.selectedRosterHero = id;
+      void loadHero(id);
+      S.launcherTab = "roster";
+      render();
+    }
+    return;
+  }
+  const rosterFilter = t.closest<HTMLElement>("[data-roster-filter]");
+  if (rosterFilter) {
+    S.rosterRoleFilter = rosterFilter.dataset.rosterFilter as typeof S.rosterRoleFilter;
+    render();
+    return;
+  }
+  const testChime = t.closest<HTMLElement>("[data-test-chime]");
+  if (testChime) {
+    playTacticalChime(testChime.dataset.testChime as "alert" | "info" | "boss" | "retreat");
+    return;
+  }
+  if (t.id === "voiceToggle") {
+    S.voice = !S.voice;
+    try {
+      localStorage.setItem("dlm_voice", S.voice ? "on" : "off");
+    } catch {}
+    if (S.voice && "speechSynthesis" in window) window.speechSynthesis.speak(new SpeechSynthesisUtterance("Suara aktif"));
+    render();
+    return;
+  }
+  if (t.id === "pin") {
+    S.isAlwaysOnTop = !S.isAlwaysOnTop;
+    try {
+      localStorage.setItem("dlm_pin", S.isAlwaysOnTop ? "1" : "0");
+    } catch {}
+    void getCurrentWindow().setAlwaysOnTop(S.isAlwaysOnTop);
+    renderStatus();
+    return;
+  }
+  if (t.id === "max") {
+    void getCurrentWindow().toggleMaximize();
+    return;
+  }
   const copy = t.closest<HTMLElement>("[data-copy]");
   if (copy) {
     await writeText(copy.dataset.copy!);
@@ -1581,6 +1944,10 @@ document.addEventListener("keydown", (e) => {
 document.addEventListener("input", (e) => {
   const t = e.target as HTMLInputElement;
   if (t.id === "matchInput") S.matchDraft = t.value;
+  if (t.id === "rosterSearchInput") {
+    S.rosterSearch = t.value;
+    render();
+  }
 });
 
 document.addEventListener("change", (e) => {
@@ -1935,6 +2302,9 @@ async function boot() {
       renderStatus();
     }),
   );
+  if (S.isAlwaysOnTop) {
+    void getCurrentWindow().setAlwaysOnTop(true);
+  }
   render();
   void checkUpdate();
   // the installed app starts its bundled server at launch: give it time to come up
@@ -1943,6 +2313,10 @@ async function boot() {
     try {
       const meta = await api<{ heroes: MetaHero[] }>("/api/meta");
       S.heroes = new Map(meta.heroes.map((h) => [h.heroId, h]));
+      if (!S.selectedRosterHero && meta.heroes.length) {
+        S.selectedRosterHero = S.pregameHero ?? meta.heroes[0].heroId;
+        void loadHero(S.selectedRosterHero);
+      }
       S.error = "";
       webNote = "";
       break;

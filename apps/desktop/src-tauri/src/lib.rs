@@ -170,8 +170,8 @@ fn widgets_visible(app: &AppHandle, on: bool) {
     }
 }
 
-/// Match finished: HUD widgets go away now; the main panel stays 20 s to show the
-/// result, then hides (Ctrl+Shift+D brings it back). Runs once per match.
+/// Match finished: HUD widgets go away now; launcher panel stays open to show the
+/// result and let the player review stats or browse meta. Runs once per match.
 fn match_over(app: &AppHandle) {
     let state = app.state::<AppState>();
     {
@@ -182,16 +182,6 @@ fn match_over(app: &AppHandle) {
         *over = true;
     }
     widgets_visible(app, false);
-    let h = app.clone();
-    tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(std::time::Duration::from_secs(20)).await;
-        // still the same finished match (no new one detected meanwhile)
-        if *h.state::<AppState>().over.lock().unwrap() {
-            if let Some(w) = h.get_webview_window("overlay") {
-                let _ = w.hide();
-            }
-        }
-    });
 }
 
 fn toggle_visible(app: &AppHandle) {

@@ -8,19 +8,46 @@
   <body>
     <div id="app">
       <header class="bar" data-tauri-drag-region>
-        <span class="dot" id="dot"></span>
-        <strong data-tauri-drag-region>DEADLOCK<span>META</span></strong> <small id="build" data-tauri-drag-region style="opacity:.55;font-size:10px;margin-left:4px"></small>
+        <div class="brand" data-tauri-drag-region>
+          <span class="dot" id="dot"></span>
+          <strong data-tauri-drag-region>DEADLOCK<span class="brand-slash">//</span><span>META</span></strong>
+          <small id="build" data-tauri-drag-region style="opacity:.6;font-size:10px;margin-left:4px"></small>
+        </div>
+        <nav class="launcher-nav" id="launcherNav">
+          <button class="nav-tab on" data-launcher-tab="home"><span class="nav-icon">🏠</span> LAUNCHER</button>
+          <button class="nav-tab" data-launcher-tab="live"><span class="nav-icon">⚔️</span> LIVE COACH <span class="live-pill" id="livePill" style="display:none">LIVE</span></button>
+          <button class="nav-tab" data-launcher-tab="roster"><span class="nav-icon">👥</span> HERO ROSTER</button>
+          <button class="nav-tab" data-launcher-tab="meta"><span class="nav-icon">📊</span> META TIER</button>
+          <button class="nav-tab" data-launcher-tab="profile"><span class="nav-icon">📜</span> RIWAYAT & ME</button>
+          <button class="nav-tab" data-launcher-tab="settings"><span class="nav-icon">⚙️</span> PENGATURAN</button>
+        </nav>
         <span class="grow" data-tauri-drag-region></span>
-        <button class="icon" id="zoom" title="Ukuran teks">A</button>
-        <button class="icon" id="alpha" title="Transparansi latar">◐</button>
-        <button class="icon" id="voice" title="Suara saran penting (klik untuk nyala/mati)">🔊</button>
-        <span class="mode" id="mode" title="Ctrl+Shift+F">interaktif</span>
-        <button class="icon window-btn" id="min" title="Minimize (perkecil ke taskbar)">&#x2212;</button>
-        <button class="icon window-btn close" id="hide" title="Sembunyikan ke tray (Ctrl+Shift+D untuk tampil lagi; keluar total: klik kanan icon tray)">✕</button>
+        <div class="window-actions">
+          <button class="icon" id="voice" title="Suara saran taktis (klik untuk nyala/mati)">🔊</button>
+          <button class="icon" id="pin" title="Sematkan di atas (Always On Top)">📌</button>
+          <button class="icon" id="zoom" title="Ukuran teks UI">A</button>
+          <button class="icon" id="alpha" title="Transparansi latar">◐</button>
+          <span class="mode" id="mode" title="Mode interaktif (Ctrl+Shift+F)">interaktif</span>
+          <button class="icon window-btn" id="min" title="Minimize (perkecil ke taskbar)">&#x2212;</button>
+          <button class="icon window-btn" id="max" title="Perbesar / Kembalikan">&#x25A2;</button>
+          <button class="icon window-btn close" id="hide" title="Sembunyikan ke tray (Ctrl+Shift+D untuk tampil lagi)">✕</button>
+        </div>
       </header>
-      <div class="status" id="status">Menunggu Deadlock…</div>
+      <div class="status-ticker" id="statusTicker">
+        <span class="ticker-dot"></span>
+        <div class="status" id="status">Menghubungkan ke Deadlock…</div>
+      </div>
       <main id="view"></main>
-      <footer>D panel · F klik-tembus · E atur HUD · B sudah beli · H fokus HUD · T tim <span class="muted">(semua Ctrl+Shift)</span></footer>
+      <footer>
+        <div class="shortcut-pills">
+          <span><kbd>Ctrl+Shift+D</kbd> Launcher</span>
+          <span><kbd>Ctrl+Shift+E</kbd> Posisi HUD</span>
+          <span><kbd>Ctrl+Shift+B</kbd> Beli #1</span>
+          <span><kbd>Ctrl+Shift+H</kbd> Fokus</span>
+          <span><kbd>Ctrl+Shift+T</kbd> Lawan</span>
+        </div>
+        <div class="footer-note">DEADLOCK META &bull; TACTICAL COMPANION</div>
+      </footer>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
