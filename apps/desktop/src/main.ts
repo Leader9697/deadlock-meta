@@ -123,9 +123,10 @@ const S = {
   rosterRoleFilter: "all" as "all" | "s" | "a",
   isAlwaysOnTop: (() => {
     try {
-      return localStorage.getItem("dlm_pin") === "1";
+      const saved = localStorage.getItem("dlm_pin");
+      return saved === null ? true : saved === "1";
     } catch {
-      return false;
+      return true;
     }
   })(),
   settings: null as Settings | null,
@@ -596,7 +597,7 @@ function playTacticalChime(kind: "alert" | "info" | "boss" | "retreat" = "info")
   }
 }
 
-/** Pick the most human, natural sounding voice (prioritizing Natural Neural engines) */
+/** Pick the most human, natural sounding voice (prioritizing Natural Neural engines) for offline fallback */
 function pickVoice(): SpeechSynthesisVoice | null {
   const vs = window.speechSynthesis?.getVoices() ?? [];
   if (!vs.length) return null;
@@ -621,19 +622,83 @@ function pickVoice(): SpeechSynthesisVoice | null {
 /** Formats coaching titles into concise, natural spoken voice callouts */
 function formatCalloutText(title: string): string {
   return title
-    .replace(/[:·]/g, ", ")
+    .replace(/[:·•]/g, ", ")
     .replace(/\bvs\b/gi, "lawan")
     .replace(/±/g, "sekitar ")
     .replace(/\bdtk\b/gi, "detik")
     .replace(/\bmnt\b/gi, "menit")
-    .replace(/⚠/g, "")
-    .replace(/⚡/g, "")
-    .replace(/🎯/g, "")
+    .replace(/\bmid-boss\b/gi, "mid bos")
+    .replace(/\bboss\b/gi, "bos")
+    .replace(/\bretreat\b/gi, "mundur")
+    .replace(/\bgank\b/gi, "genk")
+    .replace(/\bt1\b/gi, "tower satu")
+    .replace(/\bt2\b/gi, "tower dua")
+    .replace(/\bwalker\b/gi, "walker")
+    .replace(/\bguardian\b/gi, "guardian")
+    .replace(/\bpatron\b/gi, "patron")
+    .replace(/\burn\b/gi, "ern")
+    .replace(/\brejuv(?:enator)?\b/gi, "rejuve")
+    .replace(/[⚠⚡🎯⚔🛡💥🔥]/g, "")
+    .replace(/\s+/g, " ")
     .trim();
 }
 
+const ttsAudioCache = new Map<string, string>();
+let activeTtsAudio: HTMLAudioElement | null = null;
+
+function fallbackSpeechSynthesis(text: string) {
+  if (!("speechSynthesis" in window)) return;
+  try {
+    window.speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    const v = pickVoice();
+    if (v) u.voice = v;
+    u.lang = v?.lang ?? "id-ID";
+    u.rate = 1.05;
+    u.pitch = 1.0;
+    window.speechSynthesis.speak(u);
+  } catch {
+    // Ignore speech error
+  }
+}
+
+async function playNaturalVoice(rawText: string) {
+  if (!rawText) return;
+  const text = formatCalloutText(rawText);
+  if (!text) return;
+
+  try {
+    if (activeTtsAudio) {
+      activeTtsAudio.pause();
+      activeTtsAudio.currentTime = 0;
+      activeTtsAudio = null;
+    }
+
+    let url = ttsAudioCache.get(text);
+    if (!url) {
+      const q = encodeURIComponent(text.slice(0, 200));
+      url = `https://translate.google.com/translate_tts?ie=UTF-8&tl=id&client=tw-ob&q=${q}`;
+      ttsAudioCache.set(text, url);
+    }
+
+    const audio = new Audio(url);
+    activeTtsAudio = audio;
+    audio.volume = 1.0;
+
+    audio.onerror = () => {
+      fallbackSpeechSynthesis(text);
+    };
+
+    await audio.play().catch(() => {
+      fallbackSpeechSynthesis(text);
+    });
+  } catch {
+    fallbackSpeechSynthesis(text);
+  }
+}
+
 function speakTop(r: LiveResp) {
-  if (!S.voice || !("speechSynthesis" in window) || S.live?.winningTeam !== undefined) return;
+  if (!S.voice || S.live?.winningTeam !== undefined) return;
   const top = r.tips[0];
   if (!top || top.priority < 70) return;
   const now = Date.now();
@@ -645,17 +710,7 @@ function speakTop(r: LiveResp) {
   const chimeKind = isBoss ? "boss" : top.kind === "retreat" ? "retreat" : (top.priority >= 80 || top.kind === "threat" || top.kind === "objective") ? "alert" : "info";
   playTacticalChime(chimeKind);
 
-  const cleanText = formatCalloutText(top.title);
-  const u = new SpeechSynthesisUtterance(cleanText);
-  const v = pickVoice();
-  if (v) u.voice = v;
-  u.lang = v?.lang ?? "id-ID";
-  // Pitch and rate adjusted for crisp natural callout (not monotone robot)
-  u.rate = 1.05;
-  u.pitch = 1.0;
-
-  window.speechSynthesis.cancel();
-  window.speechSynthesis.speak(u);
+  void playNaturalVoice(top.title);
 }
 
 // ---------- engine events ----------
@@ -1623,10 +1678,10 @@ function renderSettingsView() {
       </div>
     </section>
     <section class="card">
-      <h3>Suara & Audio Coach <small>Synthesized tactical cues</small></h3>
+      <h3>Suara & Audio Coach <small>Natural Voice & tactical cues</small></h3>
       <div class="row" style="align-items:center;gap:12px;margin-bottom:8px">
         <button class="copy ${S.voice ? "ok" : ""}" id="voiceToggle">Suara Coach: ${S.voice ? "🔊 AKTIF" : "🔇 MATI"}</button>
-        <span class="small muted">Callout audio real-time saat Mid-Boss spawn, gank, dan instruksi push/retreat.</span>
+        <span class="small muted">Callout audio bahasa Indonesia natural saat Mid-Boss spawn, gank, dan instruksi push/retreat.</span>
       </div>
       <div class="row" style="gap:6px;align-items:center;flex-wrap:wrap">
         <span class="small muted">Uji Coba Nada Chime:</span>
@@ -1634,6 +1689,10 @@ function renderSettingsView() {
         <button class="copy" data-test-chime="alert">Tes Alert</button>
         <button class="copy" data-test-chime="boss">Tes Mid-Boss</button>
         <button class="copy" data-test-chime="retreat">Tes Retreat</button>
+      </div>
+      <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px">
+        <span class="small muted">Uji Coba Suara Coach:</span>
+        <button class="btn" id="testVoiceBtn">🗣 Tes Suara Coach Natural</button>
       </div>
     </section>
     ${connectionCard()}
@@ -1836,8 +1895,12 @@ document.addEventListener("click", async (e) => {
     try {
       localStorage.setItem("dlm_voice", S.voice ? "on" : "off");
     } catch {}
-    if (S.voice && "speechSynthesis" in window) window.speechSynthesis.speak(new SpeechSynthesisUtterance("Suara aktif"));
+    if (S.voice) void playNaturalVoice("Suara coach aktif");
     render();
+    return;
+  }
+  if (t.id === "testVoiceBtn") {
+    void playNaturalVoice("Perhatian tim, bersiap kontes Mid-Boss di pit sekarang. Hati-hati gank dari lane samping.");
     return;
   }
   if (t.id === "pin") {
@@ -1920,7 +1983,7 @@ document.addEventListener("click", async (e) => {
     try {
       localStorage.setItem("dlm_voice", S.voice ? "on" : "off");
     } catch {}
-    if (S.voice && "speechSynthesis" in window) window.speechSynthesis.speak(new SpeechSynthesisUtterance("Suara aktif"));
+    if (S.voice) void playNaturalVoice("Suara coach aktif");
     renderStatus();
     return;
   }
@@ -1938,6 +2001,11 @@ document.addEventListener("focusout", (e) => {
   }
 });
 document.addEventListener("keydown", (e) => {
+  if (e.ctrlKey && e.shiftKey && (e.key === "D" || e.key === "d")) {
+    e.preventDefault();
+    void getCurrentWindow().hide();
+    return;
+  }
   if ((e.target as HTMLElement).id === "matchInput" && e.key === "Enter") document.getElementById("matchGo")?.click();
 });
 

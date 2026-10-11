@@ -186,18 +186,28 @@ fn match_over(app: &AppHandle) {
 
 fn toggle_visible(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("overlay") {
-        if w.is_visible().unwrap_or(false) {
+        let is_focused = w.is_focused().unwrap_or(false);
+        let is_visible = w.is_visible().unwrap_or(false);
+        let is_minimized = w.is_minimized().unwrap_or(false);
+
+        // Only hide if the window is currently visible, focused, and not minimized
+        if is_visible && is_focused && !is_minimized {
             let _ = w.hide();
         } else {
+            let _ = w.unminimize();
             let _ = w.show();
+            let _ = w.set_always_on_top(true);
+            let _ = w.set_focus();
         }
     }
 }
 
 fn show_panel(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("overlay") {
-        let _ = w.show();
         let _ = w.unminimize();
+        let _ = w.show();
+        let _ = w.set_always_on_top(true);
+        let _ = w.set_focus();
     }
 }
 
