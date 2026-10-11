@@ -1416,7 +1416,23 @@ function render() {
     if (S.tab === "items") parts.push(ownedPlaysCard(r), itemsCard(r));
     if (S.tab === "deaths") parts.push(deathsCard(r));
     if (S.tab === "hero") parts.push(heroCard(), profileCard());
-    parts.push(`<div class="row" style="gap:6px"><input id="matchInput" class="small" placeholder="Ganti Match ID" inputmode="numeric" style="width:120px" value="${esc(S.matchDraft)}"><button class="copy" id="matchGo">Live</button><button class="copy" id="matchStop">Stop</button><span style="flex:1"></span><button class="copy" id="hudEdit">Atur posisi HUD (Ctrl+Shift+E)</button><button class="copy" id="hudReset">Reset</button></div>`);
+    parts.push(`
+      <div class="row" style="gap:6px;margin-top:6px;align-items:center">
+        <button class="copy" id="hudEdit">📐 Atur Posisi HUD (Ctrl+Shift+E)</button>
+        <button class="copy" id="hudReset">Reset Posisi</button>
+        <span style="flex:1"></span>
+        <button class="copy" id="matchStop" style="color:var(--loss)">Stop Match</button>
+      </div>
+      <details class="diag-details" style="margin-top:4px">
+        <summary><span style="font-size:11px">Ganti Match ID Manual (Hanya jika perlu)</span><span style="font-size:9px">▼</span></summary>
+        <div class="diag-content" style="padding-top:4px">
+          <div class="row" style="gap:6px">
+            <input id="matchInput" class="small" placeholder="Masukkan Match ID" inputmode="numeric" style="flex:1" value="${esc(S.matchDraft)}">
+            <button class="copy" id="matchGo">Terapkan Match ID</button>
+          </div>
+        </div>
+      </details>
+    `);
   } else {
     if (S.postMatchSummary) {
       const pm = S.postMatchSummary;
@@ -1620,12 +1636,11 @@ function situasiHud(r: LiveResp) {
       : "";
   const mc = r.macro;
   const isBrawl = !!(r.mode?.isBrawl || (S.live && S.live.players.length <= 8));
+  // Clean HUD: Show 1 focused lane note if critical (e.g. pushed/threatened) instead of 4 cryptic arrow symbols
   const lanes = isBrawl
     ? `<div class="hud-line win">🥊 <b>Street Brawl 4v4</b> · Draft 3 item acak di awal ronde</div>`
-    : mc?.lanes.length
-      ? `<div class="hud-lanes">${mc.lanes
-          .map((l) => `<span class="${l.status === "kita tekan" ? "win" : l.status === "kita ditekan" ? "loss" : "muted"}${mc.lane?.color === l.color ? " focus" : ""}">${esc(l.name)} ${LANE_ARROW[l.status] ?? "="}</span>`)
-          .join("")}</div>`
+    : mc?.lane
+      ? `<div class="hud-line small" style="opacity:.9">🚩 Fokus Lane: <b class="${mc.lane.status === "kita tekan" ? "win" : mc.lane.status === "kita ditekan" ? "loss" : "brass"}">${esc(mc.lane.name)}</b> (${esc(mc.lane.status)})</div>`
       : "";
   const modeTag = r.mode ? ` <span class="tag ${r.mode.isBrawl ? "hot" : r.mode.isRanked ? "main" : "ok"}">${esc(r.mode.label)}</span>` : "";
   return `<section class="card hud situasi">
@@ -1701,8 +1716,8 @@ function beliHud(r: LiveResp) {
   const im = steps[0] ? r.imbue?.find((x) => x.itemId === steps[0].itemId) : undefined;
   return `<section class="card hud beli"><h3>Beli <small>${r.adaptive ? `${PHASE_NAME[r.adaptive.phase]} · ` : ""}${k(HUD_SOULS ?? soulsNow(m))} souls</small></h3>${sell}${steps
     .map(
-      (s2, i) => `<div class="step ${s2.affordable ? "ok" : ""}"><span class="num-badge">${i + 1}</span><div class="grow2"><div class="row"><span class="name ${SLOT_CLS[s2.slot as keyof typeof SLOT_CLS] ?? ""}">${esc(s2.name)}</span><span class="small">${k(s2.cost)}</span>${s2.kind === "flex" ? `<span class="tag flex">FLEX</span>` : ""}${
-        r.sell && r.sell.forId === s2.itemId ? `<span class="tag loss">JUAL DULU</span>` : s2.affordable ? `<span class="tag ok">BISA</span>` : `<span class="small muted">−${k(s2.missing)}</span>`
+      (s2, i) => `<div class="step ${s2.affordable ? (i === 0 ? "ready-buy ok" : "ok") : ""}"><span class="num-badge">${i + 1}</span><div class="grow2"><div class="row"><span class="name ${SLOT_CLS[s2.slot as keyof typeof SLOT_CLS] ?? ""}">${esc(s2.name)}</span><span class="small">${k(s2.cost)}</span>${s2.kind === "flex" ? `<span class="tag flex">FLEX</span>` : ""}${
+        r.sell && r.sell.forId === s2.itemId ? `<span class="tag loss">JUAL DULU</span>` : s2.affordable ? `<span class="tag ok" style="font-weight:bold">BISA BELI</span>` : `<span class="small muted">−${k(s2.missing)}</span>`
       }</div>${i === 0 ? `<div class="small muted clamp1">${esc(s2.reason)}</div>${im ? `<div class="small" style="color:var(--spirit)">✨ Imbue → <b>${esc(im.target.name)}</b></div>` : ""}` : ""}</div></div>`,
     )
     .join("")}
@@ -1742,7 +1757,12 @@ function renderWidget() {
       html = `<section class="card hud"><h3>Lawan</h3>${priorityBadge}${r.matchups
         .map((mu) => {
           const v = VERDICT[mu.verdict];
-          return `<div class="row enemy-line ${mu.verdict}${mu.isTargetPriority ? " focus" : ""}">${heroIcon(mu.heroId, "ico sm")}<span class="name">${esc(mu.heroName)}</span>${mu.isTargetPriority ? `<span class="tag hot" title="Target prioritas di teamfight">FOCUS</span>` : ""}${mu.laneOpponent ? `<span class="tag hot">L</span>` : ""}${(mu.archetypes ?? []).slice(0, 1).map((a) => `<span class="tag">${ARCH_NAME[a] ?? a}</span>`).join("")}<span class="small ${mu.nwDiff > 0 ? "loss" : "win"}">${mu.nwDiff >= 0 ? "+" : "−"}${k(Math.abs(mu.nwDiff))}</span><span class="tag ${v.cls}">${v.label}${mu.verdict === "dead" && mu.respawnInS ? ` ${Math.round(mu.respawnInS)}s` : ""}</span></div>${
+          const isDead = mu.verdict === "dead";
+          const avatar = `<div class="avatar-wrapper ${isDead ? "dead" : ""} ${mu.isTargetPriority ? "target-priority" : ""}">
+            ${heroIcon(mu.heroId, "ico sm")}
+            ${isDead && mu.respawnInS ? `<div class="avatar-respawn-overlay">${Math.round(mu.respawnInS)}s</div>` : ""}
+          </div>`;
+          return `<div class="row enemy-line ${mu.verdict}${mu.isTargetPriority ? " focus" : ""}">${avatar}<span class="name">${esc(mu.heroName)}</span>${mu.isTargetPriority ? `<span class="tag hot" title="Target prioritas di teamfight">FOCUS</span>` : ""}${mu.laneOpponent ? `<span class="tag hot">L</span>` : ""}${(mu.archetypes ?? []).slice(0, 1).map((a) => `<span class="tag">${ARCH_NAME[a] ?? a}</span>`).join("")}<span class="small ${mu.nwDiff > 0 ? "loss" : "win"}">${mu.nwDiff >= 0 ? "+" : "−"}${k(Math.abs(mu.nwDiff))}</span><span class="tag ${v.cls}">${v.label}${mu.verdict === "dead" && mu.respawnInS ? ` ${Math.round(mu.respawnInS)}s` : ""}</span></div>${
             mu.bestCounter && mu.verdict !== "dead" ? `<div class="small muted counter-line">↳ ${esc(mu.bestCounter.name)} <span class="win">+${(mu.bestCounter.delta * 100).toFixed(1)}%</span></div>` : ""
           }`;
         })
@@ -1756,7 +1776,7 @@ function renderWidget() {
       const isBrawl = S.live?.gameMode === "brawl" || (S.live && S.live.players.length > 0 && S.live.players.length <= 8);
       html = `<section class="card hud situasi"><h3>Situasi ${isBrawl ? '<span class="tag hot">Brawl 4v4</span>' : ""}</h3><div class="empty">Menghubungkan ke data match…</div></section>`;
     } else {
-      html = habitsHud(HUD.habits);
+      html = ""; // Keep screen clean before match starts
     }
   }
   if (editing) {
