@@ -9,6 +9,7 @@ import {
   heroAbilities,
   coach,
   compareTeamPhases,
+  calculateDraftOdds,
   deathPatterns,
   features,
   heroCombo,
@@ -111,19 +112,33 @@ export async function POST(req: NextRequest) {
   const me = state.players.find((p) => p.accountId === state.myAccountId)!;
   const enemyHeroes = summary.threats.map((t) => t.player.heroId);
 
-  const [items, heroes, phaseCounter, phases, builds, matrix, meta, model, lab, flow, heroItems] = await Promise.all([
+  const [items, heroes, phaseCounter, phases, builds, matrix, synergies, meta, model, lab, flow, heroItems] = await Promise.all([
     getItemMap(),
     getHeroMap(),
     getPhaseCounter(me.heroId, enemyHeroes, f, summary.enemyWeights),
     getPhases(f.days, f.badge),
     getBuilds(me.heroId, f.days, f.badge).catch(() => []),
     getCounterMatrix(f.days, f.badge),
+    getSynergy(f.days, f.badge).catch(() => []),
     getHeroMeta(f.days, f.badge),
     getWinModel(),
     getLabItemMap(),
     getItemFlow(me.heroId, f.days, f.badge).catch(() => null),
     getHeroItemStats(me.heroId, f.days, f.badge).catch(() => []),
   ]);
+
+  // draft odds calculation (lineup baseline + head-to-head matchup + team synergies + phases)
+  const alliesIds = state.players.filter((p) => p.team === me.team && p.heroId > 0).map((p) => p.heroId);
+  const enemiesIds = state.players.filter((p) => p.team !== me.team && p.heroId > 0).map((p) => p.heroId);
+  const heroDraftStatsMap = new Map(meta.map((m) => [m.heroId, { heroId: m.heroId, winrate: m.winrate, matches: m.matches }]));
+  const draftOdds = calculateDraftOdds({
+    allies: alliesIds,
+    enemies: enemiesIds,
+    heroStats: heroDraftStatsMap,
+    counterMatrix: matrix,
+    synergies,
+    heroPhases: phases,
+  });
 
   // counter scores for purchases made in the *current* phase; whole-game merge as fallback
   const phase = phaseAt(state.gameTimeS);
@@ -137,7 +152,13 @@ export async function POST(req: NextRequest) {
   const counter: CounterResult = { items: nowList, bySlot, coveredEnemies: phaseCounter.coveredEnemies };
 
   const total = summary.teamNetWorth[0] + summary.teamNetWorth[1];
-  const winRaw = winProbability(model, state.gameTimeS, summary.netWorthLead, total);
+  const econWin = winProbability(model, state.gameTimeS, summary.netWorthLead, total);
+  // Blend draft prior into win chance: at 0:00 it's 100% draft prediction, fading toward pure economy by ~12:00
+  const draftWeight = Math.max(0, Math.min(1, (720 - state.gameTimeS) / 720)) * 0.45;
+  const winRaw =
+    econWin != null
+      ? (1 - draftWeight) * econWin + draftWeight * draftOdds.winProbability
+      : draftOdds.winProbability;
   // the overlay sends its smoothed value: macro plan and tips follow the trend, not every pick-off
   const winP = typeof state.winPSmooth === "number" && Number.isFinite(state.winPSmooth) ? Math.min(0.99, Math.max(0.01, state.winPSmooth)) : winRaw;
   const empirical = empiricalFor(model, state.gameTimeS, summary.netWorthLead);
@@ -441,6 +462,7 @@ export async function POST(req: NextRequest) {
     matchups: out.matchups,
     threats: summary.threats.map((t) => ({ accountId: t.player.accountId, heroId: t.player.heroId, netWorth: t.player.netWorth, nwShare: t.nwShare, weight: t.weight })),
     nextBuys: { all: slim(buys.all), weapon: slim(buys.weapon), vitality: slim(buys.vitality), spirit: slim(buys.spirit) },
+    draftOdds,
   });
 }
 

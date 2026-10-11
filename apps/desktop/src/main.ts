@@ -6,7 +6,7 @@ import { relaunch } from "@tauri-apps/plugin-process";
 import { emit, listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import type { BuildStep, DeathPattern, DeathReview, HeroCombo, EnemyMatchup, ImbueAdvice, ItemPlay, GamePlan, LiveState, MacroPlan, MatchLog, PlayerScout, TeamPhaseCompare, Tip } from "@deadlock/core";
+import type { BuildStep, DeathPattern, DeathReview, DraftOddsResult, HeroCombo, EnemyMatchup, ImbueAdvice, ItemPlay, GamePlan, LiveState, MacroPlan, MatchLog, PlayerScout, TeamPhaseCompare, Tip } from "@deadlock/core";
 import { formatClock } from "@deadlock/core";
 
 // ---------- engine events (Rust serde: tag "type", kebab-case) ----------
@@ -94,6 +94,7 @@ interface LiveResp {
   sell?: { sellId: number; sellName: string; refund: number; forId: number; forName: string; reason: string; slotsUsed: number; capacity: number } | null;
   switched?: string | null;
   mode?: { gameMode: "normal" | "brawl"; matchMode: "unranked" | "ranked"; isBrawl: boolean; isRanked: boolean; label: string };
+  draftOdds?: DraftOddsResult;
 }
 type PathStep = BuildStep & { locked?: boolean; upgradeFrom?: number; fullCost?: number };
 type Phase = "early" | "mid" | "late" | "vlate";
@@ -677,6 +678,31 @@ function winCard(r: LiveResp) {
     <div class="nw"><div class="a" style="width:${share}%"></div><div class="b" style="width:${100 - share}%"></div></div>
     <div class="row small muted" style="justify-content:space-between"><span>Tim kamu ${k(a)}</span><span class="${r.netWorthLead >= 0 ? "win" : "loss"}">${r.netWorthLead >= 0 ? "+" : "−"}${k(Math.abs(r.netWorthLead))}</span><span>Lawan ${k(b)}</span></div>
     ${emp}
+    ${
+      r.draftOdds
+        ? `<div class="draft-odds-box" style="margin-top:6px;padding:6px 8px;border-radius:6px;background:rgb(255 255 255 / .04);border:1px solid rgb(255 255 255 / .08)">
+            <div class="row small" style="justify-content:space-between">
+              <span>⚖️ <b>Prediksi Draft Lineup:</b> <span class="${r.draftOdds.winProbability >= 0.5 ? "win" : "loss"}"><b>${pct(r.draftOdds.winProbability, 0)}</b></span></span>
+              <span class="muted">Peak: <b>${PHASE_NAME[r.draftOdds.peakPhase]}</b></span>
+            </div>
+            <div class="row small muted" style="gap:8px;margin-top:3px;font-size:11px">
+              <span>Base Hero: <b class="${r.draftOdds.components.heroBaseDelta >= 0 ? "win" : "loss"}">${delta(r.draftOdds.components.heroBaseDelta)}%</b></span>
+              <span>Matchup: <b class="${r.draftOdds.components.matchupDelta >= 0 ? "win" : "loss"}">${delta(r.draftOdds.components.matchupDelta)}%</b></span>
+              <span>Sinergi: <b class="${r.draftOdds.components.synergyDelta >= 0 ? "win" : "loss"}">${delta(r.draftOdds.components.synergyDelta)}%</b></span>
+            </div>
+            ${
+              r.draftOdds.advantages[0]
+                ? `<div class="small win" style="margin-top:3px;font-size:11px">🛡️ Edge: <b>${esc(S.heroes.get(r.draftOdds.advantages[0].ourHeroId)?.name ?? `#${r.draftOdds.advantages[0].ourHeroId}`)}</b> vs <b>${esc(S.heroes.get(r.draftOdds.advantages[0].enemyHeroId)?.name ?? `#${r.draftOdds.advantages[0].enemyHeroId}`)}</b> (+${(r.draftOdds.advantages[0].delta * 100).toFixed(1)}%)</div>`
+                : ""
+            }
+            ${
+              r.draftOdds.threats[0]
+                ? `<div class="small loss" style="margin-top:2px;font-size:11px">⚠️ Awas: <b>${esc(S.heroes.get(r.draftOdds.threats[0].enemyHeroId)?.name ?? `#${r.draftOdds.threats[0].enemyHeroId}`)}</b> vs <b>${esc(S.heroes.get(r.draftOdds.threats[0].ourHeroId)?.name ?? `#${r.draftOdds.threats[0].ourHeroId}`)}</b> (${(r.draftOdds.threats[0].delta * 100).toFixed(1)}%)</div>`
+                : ""
+            }
+          </div>`
+        : ""
+    }
     ${p == null ? `<p class="small muted" style="margin:6px 0 0">Model peluang menang sedang dihitung dari match terbaru…</p>` : `<p class="small muted" style="margin:4px 0 0">Rata-rata ±2,5 menit terakhir (tidak loncat tiap pick-off) · dari ${r.winModel?.matches ?? "?"} match nyata 3 hari terakhir.</p>`}
     ${phase}
   </section>`;
@@ -1422,6 +1448,15 @@ function situasiHud(r: LiveResp) {
     <div class="row" style="justify-content:space-between"><span>${p != null ? `Menang <b class="hud-big ${p >= 0.5 ? "win" : "loss"}">${pct(p, 0)}</b> <span class="small">${winBand(p)}${trend}</span>` : `<b>Ekonomi</b>`}${modeTag}</span><span class="small ${r.netWorthLead >= 0 ? "win" : "loss"}">${r.netWorthLead >= 0 ? "+" : "−"}${k(Math.abs(r.netWorthLead))}</span></div>
     <div class="nw" style="margin:4px 0"><div class="a" style="width:${share}%"></div><div class="b" style="width:${100 - share}%"></div></div>
     ${spike}
+    ${
+      r.draftOdds && (r.gameTimeS < 600 || Math.abs(r.netWorthLead) < 1500)
+        ? `<div class="hud-line small" style="opacity:.9">⚖️ Draft: <b class="${r.draftOdds.winProbability >= 0.5 ? "win" : "loss"}">${pct(r.draftOdds.winProbability, 0)}</b> · Peak ${PHASE_NAME[r.draftOdds.peakPhase]}${
+            r.draftOdds.advantages[0]
+              ? ` · Edge: ${esc(S.heroes.get(r.draftOdds.advantages[0].ourHeroId)?.name ?? `#${r.draftOdds.advantages[0].ourHeroId}`)}`
+              : ""
+          }</div>`
+        : ""
+    }
     ${r.gamePlan ? `<div class="hud-line">🎯 <b>${esc(r.gamePlan.title)}</b></div>` : ""}
     ${lanes}
     ${teamLine()}
