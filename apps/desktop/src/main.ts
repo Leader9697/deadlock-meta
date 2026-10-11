@@ -224,10 +224,19 @@ function heroIcon(id: number, cls = "ico") {
   const h = S.heroes.get(id);
   return h?.icon ? `<img class="${cls}" src="${esc(h.icon)}" alt="" title="${esc(h.name)}">` : `<span class="${cls}"></span>`;
 }
-const heroName = (id: number) => S.heroes.get(id)?.name ?? `#${id}`;
-const me = () => S.live?.players.find((p) => p.accountId === S.live!.myAccountId);
-
-// ---------- data loaders ----------
+const me = () => {
+  if (!S.live) return undefined;
+  if (S.live.myAccountId) {
+    const found = S.live.players.find((p) => p.accountId === S.live!.myAccountId);
+    if (found) return found;
+  }
+  if (S.pregameHero) {
+    const foundByHero = S.live.players.find((p) => p.heroId === S.pregameHero);
+    if (foundByHero) return foundByHero;
+  }
+  // Fallback: pick the first player on team Amber (0) or team Sapphire (1)
+  return S.live.players[0];
+};
 async function loadHero(id: number) {
   if (S.heroInfo?.hero.id === id) return;
   try {
@@ -1614,8 +1623,20 @@ function renderWidget() {
   const r = S.liveResp;
   const m = me();
   let html = "";
-  if (r && m) {
-    if (WIDGET === "coach") html = (HUD.toast ? `<div class="hud-toast">${esc(HUD.toast)}</div>` : "") + coachCard(r, true);
+  if (WIDGET === "coach") {
+    if (HUD.toast) {
+      html = `<div class="hud-toast">${esc(HUD.toast)}</div>`;
+    } else if (r) {
+      html = coachCard(r, true);
+    } else if (S.matchId || S.live || S.connected) {
+      const isBrawl = S.live?.gameMode === "brawl" || (S.live && S.live.players.length > 0 && S.live.players.length <= 8);
+      const title = isBrawl ? "Street Brawl 4v4" : S.matchId ? `Match #${S.matchId}` : "Menyiapkan Coach";
+      const desc = isBrawl ? "Draft 3 item acak per ronde · Menunggu live data…" : "Menghubungkan ke broadcast live…";
+      html = `<section class="coach calm compact hud"><div class="coach-main"><span class="coach-ico">⏱</span><div class="coach-txt"><b>${esc(title)}</b><p>${esc(desc)}</p></div></div></section>`;
+    } else {
+      html = `<section class="coach calm compact hud"><div class="coach-main"><span class="coach-ico">⏱</span><div class="coach-txt"><b>Menunggu Match…</b><p>Asisten akan aktif saat kamu masuk match</p></div></div></section>`;
+    }
+  } else if (r && m) {
     if (WIDGET === "win" && !HUD.focus) html = situasiHud(r);
     if (WIDGET === "buy") html = beliHud(r);
     if (WIDGET === "enemies" && HUD.team) html = teamHtml(true);
@@ -1628,15 +1649,6 @@ function renderWidget() {
           }`;
         })
         .join("")}</section>`;
-    }
-  } else if (WIDGET === "coach") {
-    if (HUD.toast) {
-      html = `<div class="hud-toast">${esc(HUD.toast)}</div>`;
-    } else if (S.matchId || S.live || S.connected) {
-      const isBrawl = S.live?.gameMode === "brawl" || (S.live && S.live.players.length > 0 && S.live.players.length <= 8);
-      const title = isBrawl ? "Street Brawl 4v4" : S.matchId ? `Match #${S.matchId}` : "Menyiapkan Coach";
-      const desc = isBrawl ? "Draft 3 item acak per ronde · Menunggu live data…" : "Menghubungkan ke broadcast live…";
-      html = `<section class="coach calm compact hud"><div class="coach-main"><span class="coach-ico">⏱</span><div class="coach-txt"><b>${esc(title)}</b><p>${esc(desc)}</p></div></div></section>`;
     }
   } else if (WIDGET === "buy" && (S.matchId || S.live)) {
     const isBrawl = S.live?.gameMode === "brawl" || (S.live && S.live.players.length > 0 && S.live.players.length <= 8);
