@@ -2,8 +2,20 @@ import { NextResponse, type NextRequest } from "next/server";
 import type { MatchLog } from "@deadlock/core";
 import { listMatchLogs, saveMatchLog } from "@/lib/store";
 
+function isAuthorized(req: NextRequest): boolean {
+  const host = req.headers.get("host") || "";
+  const isLocal = host.startsWith("localhost") || host.startsWith("127.0.0.1") || host.startsWith("[::1]");
+  if (isLocal) return true;
+  const token = req.headers.get("x-dlm-token");
+  const secret = process.env.DLM_INTERNAL_TOKEN;
+  return !!secret && token === secret;
+}
+
 /** The overlay saves its per-match advice log here (overwrites by match id). */
 export async function POST(req: NextRequest) {
+  if (!isAuthorized(req)) {
+    return NextResponse.json({ error: "Akses ditolak" }, { status: 403 });
+  }
   let log: MatchLog;
   try {
     log = (await req.json()) as MatchLog;
@@ -24,6 +36,9 @@ export async function POST(req: NextRequest) {
 }
 
 export async function GET(req: NextRequest) {
+  if (!isAuthorized(req)) {
+    return NextResponse.json({ error: "Akses ditolak" }, { status: 403 });
+  }
   const account = Number(req.nextUrl.searchParams.get("account")) || undefined;
   return NextResponse.json(await listMatchLogs(account));
 }

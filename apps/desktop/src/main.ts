@@ -6,8 +6,8 @@ import { relaunch } from "@tauri-apps/plugin-process";
 import { emit, listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import type { BuildStep, DeathPattern, DeathReview, DraftOddsResult, HeroCombo, EnemyMatchup, ImbueAdvice, ItemPlay, GamePlan, LiveState, MacroPlan, MatchLog, PlayerScout, TeamPhaseCompare, Tip } from "@deadlock/core";
-import { formatClock } from "@deadlock/core";
+import type { BuildStep, DeathPattern, DeathReview, DraftOddsResult, HeroCombo, EnemyMatchup, ImbueAdvice, ItemPlay, GamePlan, LiveState, MacroPlan, MatchLog, PlayerScout, TeamPhaseCompare, Tip, WinSmoothState, MacroHoldState, TipHoldState } from "@deadlock/core";
+import { formatClock, smoothWinProb, holdMacroPlan, stabilizeTips, computeLagSeconds, filterPendingBuys, computeSoulsPacing } from "@deadlock/core";
 
 // ---------- engine events (Rust serde: tag "type", kebab-case) ----------
 type EngineEvent =
@@ -335,39 +335,25 @@ let liveInFlight = false;
  * shows the trend; a team wipe still moves it within a couple of minutes.
  */
 const WIN_TAU_S = 150;
-let winSmooth: { p: number; t: number; matchId: number | null } | null = null;
+let winSmooth: WinSmoothState | null = null;
 const winHist: [number, number][] = [];
 function smoothWin(raw: number | null, t: number): number | null {
-  if (raw == null) return winSmooth?.p ?? null;
   const mid = S.live?.matchId ?? null;
-  if (!winSmooth || winSmooth.matchId !== mid || t < winSmooth.t) {
-    winSmooth = { p: raw, t, matchId: mid };
-    winHist.length = 0;
-  } else {
-    const a = 1 - Math.exp(-Math.max(0, t - winSmooth.t) / WIN_TAU_S);
-    winSmooth = { p: winSmooth.p + a * (raw - winSmooth.p), t, matchId: mid };
+  const res = smoothWinProb(winSmooth, raw, t, mid, WIN_TAU_S);
+  winSmooth = res.state;
+  if (winSmooth) {
+    winHist.push([t, winSmooth.p]);
+    while (winHist.length && t - winHist[0][0] > 300) winHist.shift();
   }
-  winHist.push([t, winSmooth.p]);
-  while (winHist.length && t - winHist[0][0] > 300) winHist.shift();
-  return winSmooth.p;
+  return res.p;
 }
-/**
- * Macro plan hold: a calm plan (farm / lane / siege / group) stays at least 45 s so the
- * HUD does not flip every update; plans from a numbers window (deaths) replace it at once
- * and are dropped when their in-game clock time has passed.
- */
-let macroHeld: { plan: MacroPlan; since: number; matchId: number | null } | null = null;
+
+let macroHeld: MacroHoldState | null = null;
 function holdMacro(mc: MacroPlan | undefined, t: number): MacroPlan | undefined {
-  if (!mc) return mc;
   const mid = S.live?.matchId ?? null;
-  const prev = macroHeld && macroHeld.matchId === mid ? macroHeld : null;
-  const nowClock = t + lagSeconds();
-  const prevExpired = !!prev?.plan.until && nowClock > prev.plan.until;
-  if (prev && !mc.urgent && !prevExpired && prev.plan.action !== mc.action && t - prev.since < 45) {
-    return { ...prev.plan, lanes: mc.lanes };
-  }
-  if (!prev || prev.plan.action !== mc.action || prev.plan.title !== mc.title) macroHeld = { plan: mc, since: t, matchId: mid };
-  return mc;
+  const res = holdMacroPlan(macroHeld, mc, t, mid, lagSeconds(), 45);
+  macroHeld = res.state;
+  return res.plan;
 }
 
 /** change of the smoothed value over the last ~2 min (points) */
@@ -429,7 +415,7 @@ function onHotkey(k: string) {
 /** drop pending buys the broadcast already shows, or that are older than 6 min game time */
 function livePending(owned: number[]) {
   const t = S.live?.gameTimeS ?? 0;
-  S.pending = S.pending.filter((p) => p.matchId === (S.live?.matchId ?? null) && !owned.includes(p.itemId) && t - p.atS < 360);
+  S.pending = filterPendingBuys(S.pending, owned, t, S.live?.matchId ?? null);
   return S.pending;
 }
 
@@ -498,24 +484,14 @@ async function postLive(force = false) {
 }
 
 // ---------- tip stability: don't let the top call flicker every 10 s ----------
-let topTip: { title: string; priority: number; since: number } | null = null;
+let topTip: TipHoldState | null = null;
 let freshTop = false;
 function stabilize(tips: Tip[]): Tip[] {
-  const now = Date.now();
-  const first = tips[0];
-  if (!first) {
-    topTip = null;
-    return tips;
-  }
-  const keep = topTip && tips.find((t) => t.title === topTip!.title);
-  // the current top call stays ≥ 20 s unless something clearly more urgent arrives
-  if (keep && first.title !== keep.title && now - topTip!.since < 20_000 && first.priority < topTip!.priority + 10) {
-    freshTop = false;
-    return [keep, ...tips.filter((t) => t !== keep)];
-  }
-  freshTop = !topTip || topTip.title !== first.title;
-  if (freshTop) topTip = { title: first.title, priority: first.priority, since: now };
-  return tips;
+  const prevTitle = topTip?.title;
+  const res = stabilizeTips(topTip, tips, Date.now());
+  topTip = res.state;
+  freshTop = !prevTitle || prevTitle !== res.tips[0]?.title;
+  return res.tips;
 }
 
 // ---------- staleness: the broadcast can stall; never show old advice as current ----------
@@ -528,10 +504,7 @@ const BASE_DELAY = 75;
  * first data. Grows when the broadcast / live query falls behind. (A game pause also counts.)
  */
 function lagSeconds(): number {
-  const a = S.lagAnchor;
-  if (!a || !S.live || a.matchId !== S.live.matchId) return BASE_DELAY;
-  const drift = (Date.now() - a.wall) / 1000 - (S.live.gameTimeS - a.game);
-  return Math.max(30, Math.round(BASE_DELAY + drift));
+  return computeLagSeconds(S.lagAnchor, S.live?.gameTimeS ?? 0, S.live?.matchId ?? null, Date.now(), BASE_DELAY);
 }
 setInterval(() => {
   if (S.connected && staleSeconds() >= 30) renderStatus();
@@ -718,6 +691,14 @@ async function playNaturalVoice(rawText: string) {
   const text = formatCalloutText(rawText);
   if (!text) return;
 
+  // 1. If the OS has an Indonesian/Malay voice, use it directly (0ms latency, offline & proxy-safe)
+  const voice = pickVoice();
+  if (voice && (voice.lang.toLowerCase().startsWith("id") || voice.lang.toLowerCase().startsWith("ms"))) {
+    fallbackSpeechSynthesis(text);
+    return;
+  }
+
+  // 2. Otherwise try Google TTS with a 1.5s timeout guard and fallback to speechSynthesis
   try {
     if (activeTtsAudio) {
       activeTtsAudio.pause();
@@ -736,13 +717,40 @@ async function playNaturalVoice(rawText: string) {
     activeTtsAudio = audio;
     audio.volume = 1.0;
 
-    audio.onerror = () => {
+    let resolved = false;
+    const cleanup = () => {
+      resolved = true;
+      clearTimeout(timer);
+      audio.removeEventListener("canplay", onCanPlay);
+      audio.removeEventListener("error", onError);
+    };
+
+    const onError = () => {
+      if (resolved) return;
+      cleanup();
       fallbackSpeechSynthesis(text);
     };
 
-    await audio.play().catch(() => {
+    const onCanPlay = () => {
+      if (resolved) return;
+      cleanup();
+      audio.play().catch(() => fallbackSpeechSynthesis(text));
+    };
+
+    // 1500ms timeout guard against rate-limiting, proxy drops, or silent HTML responses
+    const timer = setTimeout(() => {
+      if (resolved) return;
+      cleanup();
+      try {
+        audio.pause();
+        audio.src = "";
+      } catch {}
       fallbackSpeechSynthesis(text);
-    });
+    }, 1500);
+
+    audio.addEventListener("canplay", onCanPlay, { once: true });
+    audio.addEventListener("error", onError, { once: true });
+    audio.load();
   } catch {
     fallbackSpeechSynthesis(text);
   }
@@ -976,6 +984,14 @@ function winCard(r: LiveResp) {
     } ${trend}</h3>
     <div class="nw"><div class="a" style="width:${share}%"></div><div class="b" style="width:${100 - share}%"></div></div>
     <div class="row small muted" style="justify-content:space-between"><span>Tim kamu ${k(a)}</span><span class="${r.netWorthLead >= 0 ? "win" : "loss"}">${r.netWorthLead >= 0 ? "+" : "−"}${k(Math.abs(r.netWorthLead))}</span><span>Lawan ${k(b)}</span></div>
+    ${(() => {
+      const p = computeSoulsPacing(m.netWorth, r.gameTimeS);
+      if (!p) return "";
+      return `<div class="row small" style="margin-top:6px;padding:4px 8px;border-radius:6px;background:rgba(229,179,88,0.08);border:1px solid rgba(229,179,88,0.2);justify-content:space-between">
+        <span>⚡ <b>Pacing Souls (${formatClock(r.gameTimeS)}):</b> kamu <b>${k(p.current)}</b></span>
+        <span class="${p.isAhead ? "win" : "loss"}" style="font-weight:700">${p.label}</span>
+      </div>`;
+    })()}
     ${emp}
     ${
       r.draftOdds
@@ -1498,6 +1514,19 @@ function heroPickCard() {
       ${selected ? heroIcon(selected.heroId, "ico") : `<span class="ico" style="display:grid;place-items:center;color:var(--muted)">🎮</span>`}
       <select id="heroSel" style="flex:1"><option value="">Pilih / cari hero dari daftar…</option>
         ${heroes.map((h) => `<option value="${h.heroId}" ${h.heroId === S.pregameHero ? "selected" : ""}>${esc(h.name)} (WR ${pct(h.winrate, 0)} · Tier ${h.tier})</option>`).join("")}</select>
+    </div>
+    <div class="row small muted" style="margin-top:8px;gap:6px;align-items:center;flex-wrap:wrap">
+      <span>💡 <b>Rekomendasi Draft Meta (Tier S):</b></span>
+      ${heroes
+        .filter((h) => h.tier === "S")
+        .slice(0, 4)
+        .map(
+          (h) => `
+        <button class="copy ${h.heroId === S.pregameHero ? "ok" : ""}" data-hero-pick="${h.heroId}" style="padding:3px 8px;display:inline-flex;align-items:center;gap:4px">
+          ${heroIcon(h.heroId, "ico sm")} <span>${esc(h.name)}</span> <span class="win" style="font-weight:700">${pct(h.winrate, 0)}</span>
+        </button>`,
+        )
+        .join("")}
     </div>
   </section>`;
 }
@@ -2395,11 +2424,11 @@ function situasiHud(r: LiveResp) {
     ${r.gamePlan ? `<div class="hud-line">🎯 <b>${esc(r.gamePlan.title)}</b></div>` : ""}
     ${lanes}
     ${
-      !isBrawl && r.gameTimeS >= 120 && r.gameTimeS <= 660
+      !isBrawl && r.gameTimeS >= 120 && r.gameTimeS <= 720
         ? (() => {
-            const targetNw = Math.round((r.gameTimeS / 60) * 340);
-            const delta = m.netWorth - targetNw;
-            return `<div class="hud-line small" style="opacity:.9">🎯 Laning Pace: target <b>${k(targetNw)}</b> · kamu <b class="${delta >= 0 ? "win" : "loss"}">${k(m.netWorth)}</b> <span class="${delta >= 0 ? "win" : "loss"}">(${delta >= 0 ? "+" : "−"}${k(Math.abs(delta))})</span></div>`;
+            const p = computeSoulsPacing(m.netWorth, r.gameTimeS);
+            if (!p) return "";
+            return `<div class="hud-line small" style="opacity:.9">⚡ Laning Souls: target <b>${k(p.target)}</b> · kamu <b class="${p.isAhead ? "win" : "loss"}">${k(p.current)}</b> <span class="${p.isAhead ? "win" : "loss"}">(${p.delta >= 0 ? "+" : "−"}${k(Math.abs(p.delta))})</span></div>`;
           })()
         : ""
     }

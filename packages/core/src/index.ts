@@ -30,3 +30,4 @@ export * from "./spikes";
 export * from "./combo";
 export * from "./imbue";
 export * from "./draftodds";
+export * from "./live-smoothing";

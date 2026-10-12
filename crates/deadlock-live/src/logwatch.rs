@@ -103,6 +103,9 @@ impl Matchers {
             if let Some(c) = re.captures(line) {
                 let state = c.name("state").and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
                 let name = c.name("name").map(|m| m.as_str().to_string()).unwrap_or_default();
+                if state == 6 || name.eq_ignore_ascii_case("POST_GAME") || name.eq_ignore_ascii_case("GAME_STATE_POST_GAME") {
+                    out.push(LogEvent::MatchEnd);
+                }
                 out.push(LogEvent::GameState { state, name });
             }
         }

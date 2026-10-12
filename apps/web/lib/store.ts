@@ -9,13 +9,32 @@ import type { MatchLog } from "@deadlock/core";
  */
 const dir = () => path.join(process.env.DLM_DATA_DIR || path.join(process.cwd(), ".data"), "match-logs");
 
+const MAX_STORED_LOGS = 200;
+
 export async function saveMatchLog(log: MatchLog): Promise<void> {
   if (!Number.isFinite(log.matchId) || log.matchId <= 0) throw new Error("matchId tidak valid");
-  await fs.mkdir(dir(), { recursive: true });
-  const file = path.join(dir(), `${Math.floor(log.matchId)}.json`);
-  const tmp = `${file}.tmp`;
-  await fs.writeFile(tmp, JSON.stringify(log));
-  await fs.rename(tmp, file);
+  try {
+    await fs.mkdir(dir(), { recursive: true });
+    const file = path.join(dir(), `${Math.floor(log.matchId)}.json`);
+    const tmp = `${file}.tmp`;
+    await fs.writeFile(tmp, JSON.stringify(log));
+    await fs.rename(tmp, file);
+
+    // Prune logs older than MAX_STORED_LOGS to keep disk bounded
+    const names = (await fs.readdir(dir())).filter((n) => n.endsWith(".json"));
+    if (names.length > MAX_STORED_LOGS) {
+      names.sort((a, b) => {
+        const idA = parseInt(a.replace(".json", ""), 10) || 0;
+        const idB = parseInt(b.replace(".json", ""), 10) || 0;
+        return idB - idA;
+      });
+      const toRemove = names.slice(MAX_STORED_LOGS);
+      await Promise.allSettled(toRemove.map((n) => fs.unlink(path.join(dir(), n))));
+    }
+  } catch (err) {
+    // In read-only serverless environments, don't crash the request
+    console.warn("[store] saveMatchLog disk write failed (read-only environment?):", err);
+  }
 }
 
 export async function listMatchLogs(accountId?: number, limit = 50): Promise<MatchLog[]> {

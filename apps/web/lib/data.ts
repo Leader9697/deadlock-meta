@@ -42,11 +42,32 @@ const PLAYER: FetchInit = { next: { revalidate: 120 } };
  * re-downloaded them. Failed loads are not kept. Lives on globalThis so dev reloads
  * don't drop it.
  */
-type MemoEntry = { at: number; p: Promise<unknown>; lastGood?: unknown };
+type MemoEntry = { at: number; ttl: number; p: Promise<unknown>; lastGood?: unknown };
+const MAX_MEMO_ENTRIES = 200;
 const MEMO: Map<string, MemoEntry> = ((globalThis as Record<string, unknown>).__dlMemo ??= new Map()) as Map<string, MemoEntry>;
+
+function sweepMemo() {
+  const now = Date.now();
+  for (const [k, e] of MEMO.entries()) {
+    if (now - e.at >= e.ttl) {
+      MEMO.delete(k);
+    }
+  }
+  while (MEMO.size >= MAX_MEMO_ENTRIES) {
+    const oldest = MEMO.keys().next().value;
+    if (!oldest) break;
+    MEMO.delete(oldest);
+  }
+}
+
 export function memo<T>(key: string, ttlMs: number, load: () => Promise<T>): Promise<T> {
   const hit = MEMO.get(key);
-  if (hit && Date.now() - hit.at < ttlMs) return hit.p as Promise<T>;
+  if (hit && Date.now() - hit.at < ttlMs) {
+    // Refresh LRU position
+    MEMO.delete(key);
+    MEMO.set(key, hit);
+    return hit.p as Promise<T>;
+  }
   const rawP = load();
   const p = rawP
     .then((val) => {
@@ -71,7 +92,11 @@ export function memo<T>(key: string, ttlMs: number, load: () => Promise<T>): Pro
       throw err;
     });
 
-  MEMO.set(key, { at: Date.now(), p, lastGood: hit?.lastGood });
+  if (MEMO.size >= MAX_MEMO_ENTRIES) {
+    sweepMemo();
+  }
+  MEMO.delete(key);
+  MEMO.set(key, { at: Date.now(), ttl: ttlMs, p, lastGood: hit?.lastGood });
   return p;
 }
 const ASSET_TTL = 3600_000;

@@ -7,8 +7,8 @@ on:
     branches: ["main"]
 
 jobs:
-  check:
-    runs-on: windows-latest
+  node:
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -16,12 +16,6 @@ jobs:
         with:
           node-version: 22
           cache: npm
-
-      - uses: dtolnay/rust-toolchain@stable
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: ". -> target"
 
       - name: Install dependencies
         run: npm ci
@@ -32,8 +26,19 @@ jobs:
       - name: Vitest Unit Tests
         run: npm test
 
+  rust:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+
       - name: Cargo Check
         run: cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml
 
-      - name: Cargo Test
-        run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
+      - name: Cargo Test (Workspace: deadlock-live + desktop)
+        run: cargo test --workspace

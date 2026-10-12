@@ -129,6 +129,11 @@ impl Default for LogPatterns {
             ],
             match_end: vec![
                 r"Disconnecting from server: NETWORK_DISCONNECT_".into(),
+                r"\bEntering game state:\s*6\b".into(),
+                r"\bChangeGameState:\s*(?:POST_GAME|GAME_STATE_POST_GAME)\b".into(),
+                r"\bCitadel(?:GameRules)?:\s*Match (?:ended|over)\b".into(),
+                r"\bMatch outcome:\s*(?:Team|winner)".into(),
+                r"\bHost_Disconnect\b".into(),
             ],
             hero_loaded: vec![
                 r#"\[Server\] Loaded hero (?P<entity>\d+)/(?P<hero>hero_\w+)"#.into(),

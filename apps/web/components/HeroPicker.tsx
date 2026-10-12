@@ -56,7 +56,7 @@ export function HeroPicker({ heroes, hero, enemies }: { heroes: PickerHero[]; he
       title={id ? `Hapus ${byId.get(id)?.name}` : label}
     >
       {id && byId.get(id)?.img ? (
-        <img src={byId.get(id)!.img} alt="" className="h-full w-full object-cover" />
+        <img src={byId.get(id)!.img} alt={byId.get(id)?.name || "Hero"} className="h-full w-full object-cover" />
       ) : id ? (
         <span className="px-1 text-center text-fg">{byId.get(id)?.name}</span>
       ) : (
