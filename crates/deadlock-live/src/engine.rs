@@ -51,7 +51,7 @@ pub async fn run(cfg: Config, events: mpsc::Sender<EngineEvent>, mut cmds: mpsc:
     let mut procs = ProcessWatch::new(&cfg.process_names);
     let mut proc_tick = interval(Duration::from_millis(cfg.poll_process_ms));
     let mut log_tick = interval(Duration::from_millis(cfg.poll_log_ms));
-    let mut fallback_tick = interval(Duration::from_secs(60));
+    let mut fallback_tick = interval(Duration::from_secs(10));
 
     let mut running = false;
     let mut last_seen: Option<Instant> = None;
@@ -351,7 +351,8 @@ async fn resolve_url(api: &Api, match_id: u64, events: &mpsc::Sender<EngineEvent
                 }
             }
         }
-        tokio::time::sleep(Duration::from_secs(20)).await;
+        let delay = if started.elapsed() < Duration::from_secs(90) { Duration::from_secs(4) } else { Duration::from_secs(15) };
+        tokio::time::sleep(delay).await;
     }
     None
 }

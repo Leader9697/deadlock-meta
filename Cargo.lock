@@ -612,7 +612,7 @@ dependencies = [
 
 [[package]]
 name = "deadlock-meta-desktop"
-version = "0.3.23"
+version = "0.3.24"
 dependencies = [
  "deadlock-live",
  "serde",

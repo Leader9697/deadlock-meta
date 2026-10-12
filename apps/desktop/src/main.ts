@@ -205,7 +205,14 @@ const S = {
   leadHistory: [] as [number, number][],
   heroes: new Map<number, MetaHero>(),
   heroInfo: null as HeroInfo | null,
-  pregameHero: null as number | null,
+  pregameHero: (() => {
+    try {
+      const v = localStorage.getItem("dlm_pregame_hero");
+      return v ? Number(v) : null;
+    } catch {
+      return null;
+    }
+  })(),
   scout: null as ScoutResp | null,
   scoutKey: "",
   tab: "now" as Tab,
@@ -416,8 +423,21 @@ function markBought(id: number) {
 function onHotkey(k: string) {
   if (k === "bought") {
     const first = S.liveResp?.buildPath.find((x) => !S.pending.some((p) => p.itemId === x.itemId));
-    if (!S.live || !first) return toast("Belum ada saran beli untuk ditandai");
-    markBought(first.itemId);
+    if (S.live && first) {
+      markBought(first.itemId);
+    } else {
+      const earlyItems = S.heroInfo?.itemsByTier?.["1"] ?? [];
+      const firstEarly = earlyItems.find((x) => !S.pending.some((p) => p.itemId === x.id));
+      if (firstEarly) {
+        if (!S.pending.some((p) => p.itemId === firstEarly.id)) {
+          S.pending.push({ itemId: firstEarly.id, name: firstEarly.name, cost: 500, atS: S.live?.gameTimeS ?? 0, matchId: S.matchId });
+        }
+        toast(`✓ ${firstEarly.name} ditandai sudah dibeli`);
+        render();
+      } else {
+        toast("Belum ada saran beli untuk ditandai");
+      }
+    }
   } else if (k === "team") {
     S.teamUntil = Date.now() + 10_000;
     render();
@@ -796,13 +816,17 @@ function onEngine(ev: EngineEvent) {
   switch (ev.type) {
     case "game-started":
       S.game = true;
+      render();
       break;
     case "game-stopped":
       Object.assign(S, { game: false, matchId: null, connected: false, live: null, liveResp: null, scout: null, scoutKey: "", leadHistory: [] });
+      render();
       break;
     case "match-detected":
       Object.assign(S, { matchId: ev.match_id, matchSource: ev.source, connected: false, ended: false, live: null, liveResp: null, error: "", note: "", leadHistory: [] });
       if (S.launcherTab === "home") S.launcherTab = "live";
+      if (S.pregameHero) void loadHero(S.pregameHero);
+      render();
       break;
     case "status":
       S.note = ev.message;
@@ -1585,6 +1609,8 @@ interface OverlayData {
   matchId: number | null;
   heroes: [number, MetaHero][];
   scout: ScoutResp | null;
+  pregameHero?: number | null;
+  heroInfo?: HeroInfo | null;
 }
 /** why the bundled site is not reachable (from the Rust side), shown in Status koneksi */
 let webNote = "";
@@ -1598,8 +1624,18 @@ function broadcast(force = false) {
     const m = me();
     return m ? soulsNow(m) : null;
   })(), staleAgeS: staleLiveS };
-  const data: OverlayData = { hud, r: S.liveResp, live: S.live, connected: S.connected, matchId: S.matchId, heroes: [...S.heroes], scout: S.scout };
-  const key = JSON.stringify([data.r, data.matchId, data.live?.gameTimeS, data.connected, data.heroes.length, S.scoutKey, hud]);
+  const data: OverlayData = {
+    hud,
+    r: S.liveResp,
+    live: S.live,
+    connected: S.connected,
+    matchId: S.matchId,
+    heroes: [...S.heroes],
+    scout: S.scout,
+    pregameHero: S.pregameHero,
+    heroInfo: S.heroInfo,
+  };
+  const key = JSON.stringify([data.r, data.matchId, data.live?.gameTimeS, data.connected, data.heroes.length, S.scoutKey, hud, S.pregameHero, S.heroInfo?.hero.id]);
   if (!force && key === lastBroadcast) return;
   lastBroadcast = key;
   void emit("overlay-data", data);
@@ -2253,6 +2289,9 @@ document.addEventListener("click", async (e) => {
     const id = Number(heroPick.dataset.heroPick);
     if (id) {
       S.pregameHero = id;
+      try {
+        localStorage.setItem("dlm_pregame_hero", String(id));
+      } catch {}
       void loadHero(id);
       render();
     }
@@ -2370,6 +2409,9 @@ document.addEventListener("change", (e) => {
   }
   if (t.id === "heroSel" && t.value) {
     S.pregameHero = Number(t.value);
+    try {
+      localStorage.setItem("dlm_pregame_hero", String(S.pregameHero));
+    } catch {}
     t.blur(); // lets the deferred render (and the hero's build) through
     void loadHero(S.pregameHero);
     return;
@@ -2543,6 +2585,46 @@ function beliHud(r: LiveResp) {
     <div class="hud-hint">Ctrl+Shift+B = sudah beli #1 · Ctrl+Shift+H = fokus</div></section>`;
 }
 
+/** HUD "Beli" for 0:00 starting items before live broadcast is ready */
+function startingItemsHud(heroId: number | null) {
+  const heroName = heroId ? S.heroes.get(heroId)?.name ?? S.heroInfo?.hero.name ?? "Hero" : "Hero";
+  const items = (S.heroInfo && (!heroId || S.heroInfo.hero.id === heroId))
+    ? S.heroInfo.itemsByTier?.["1"] ?? []
+    : [];
+  const displayItems = items.length > 0
+    ? items.slice(0, HUD.focus ? 2 : 3)
+    : [
+        { id: 1, name: "Basic Magazine", slot: "weapon" as const, delta: 0.02 },
+        { id: 2, name: "Extra Health", slot: "vitality" as const, delta: 0.03 },
+        { id: 3, name: "Extra Spirit", slot: "spirit" as const, delta: 0.02 },
+      ].slice(0, HUD.focus ? 2 : 3);
+
+  return `<section class="card hud beli">
+    <div class="hud-title-bar">
+      <h3>Beli <small>0:00 · 500 souls</small></h3>
+      <span class="tag hot" style="font-size:10px">AWAL GAME</span>
+    </div>
+    <div class="small muted" style="margin-bottom:6px">🚀 Beli 1 item Tier 1 di base (500 souls) sebelum zipline · <b>${esc(heroName)}</b>:</div>
+    ${displayItems
+      .map(
+        (it, i) => `<div class="step ready-buy ok">
+          <span class="num-badge">${i + 1}</span>
+          <div class="grow2">
+            <div class="row">
+              <span class="name ${SLOT_CLS[it.slot] ?? ""}">${esc(it.name)}</span>
+              <span class="small">500</span>
+              <span class="tag ok" style="font-weight:bold">BISA BELI</span>
+            </div>
+            <div class="small muted clamp1">${it.delta !== undefined ? `Tier 1 rekomendasi (${delta(it.delta)})` : "Pilihan awal"}</div>
+          </div>
+        </div>`,
+      )
+      .join("")}
+    ${HUD.pending.length ? `<div class="small muted" style="margin-top:4px">✓ ditandai: ${HUD.pending.map(esc).join(", ")}</div>` : ""}
+    <div class="hud-hint">Ctrl+Shift+B = sudah beli #1 · Live sync otomatis saat broadcast masuk</div>
+  </section>`;
+}
+
 function renderWidget() {
   const r = S.liveResp;
   const m = me();
@@ -2552,17 +2634,28 @@ function renderWidget() {
       html = `<div class="hud-toast">${esc(HUD.toast)}</div>`;
     } else if (r) {
       html = coachCard(r, true);
-    } else if (S.matchId || S.live || S.connected) {
+    } else if (S.matchId || S.live || S.connected || S.game || S.force) {
       const isBrawl = S.live?.gameMode === "brawl" || (S.live && S.live.players.length > 0 && S.live.players.length <= 8);
-      const title = isBrawl ? "Street Brawl 4v4" : S.matchId ? `Match #${S.matchId}` : "Menyiapkan Coach";
-      const desc = isBrawl ? "Draft 3 item acak per ronde · Menunggu live data…" : "Menghubungkan ke broadcast live…";
+      const selHeroId = m?.heroId ?? S.pregameHero ?? (S.live?.players[0]?.heroId ?? null);
+      const heroName = selHeroId ? (S.heroes.get(selHeroId)?.name ?? S.heroInfo?.hero.name ?? "") : "";
+      const title = isBrawl ? "Street Brawl 4v4" : heroName ? `Fase Awal · ${heroName}` : (S.matchId ? `Match #${S.matchId}` : "Menyiapkan Coach");
+      const desc = isBrawl
+        ? "Draft 3 item acak per ronde · Menunggu live data…"
+        : heroName
+          ? "Beli 1 item Tier 1 di base (500 souls) sebelum zipline. Broadcast sinkron ~1-2 menit."
+          : (S.matchId ? `Match terdeteksi (#${S.matchId}) · Menghubungkan ke broadcast live…` : "Menghubungkan ke broadcast live…");
       html = `<section class="coach calm compact hud"><div class="coach-main"><span class="coach-ico">⏱</span><div class="coach-txt"><b>${esc(title)}</b><p>${esc(desc)}</p></div></div></section>`;
     } else {
-      html = `<section class="coach calm compact hud"><div class="coach-main"><span class="coach-ico">⏱</span><div class="coach-txt"><b>Menunggu Match…</b><p>Asisten akan aktif saat kamu masuk match</p></div></div></section>`;
+      const selHeroId = S.pregameHero;
+      const heroName = selHeroId ? (S.heroes.get(selHeroId)?.name ?? S.heroInfo?.hero.name ?? "") : "";
+      const desc = heroName ? `Hero siap: ${heroName}. Asisten aktif saat match dimulai.` : "Asisten akan aktif saat kamu masuk match";
+      html = `<section class="coach calm compact hud"><div class="coach-main"><span class="coach-ico">⏱</span><div class="coach-txt"><b>Menunggu Match…</b><p>${esc(desc)}</p></div></div></section>`;
     }
   } else if (r && m) {
     if (WIDGET === "win" && !HUD.focus) html = situasiHud(r);
-    if (WIDGET === "buy") html = beliHud(r);
+    if (WIDGET === "buy") {
+      html = r.buildPath && r.buildPath.length > 0 ? beliHud(r) : startingItemsHud(m.heroId || S.pregameHero);
+    }
     if (WIDGET === "enemies" && HUD.team) html = teamHtml(true);
     else if (WIDGET === "enemies" && !HUD.focus) {
       const priorityEnemy = r.matchups.find((m) => m.isTargetPriority);
@@ -2608,9 +2701,14 @@ function renderWidget() {
         </div>
       </section>`;
     }
-  } else if (WIDGET === "buy" && (S.matchId || S.live)) {
-    const isBrawl = S.live?.gameMode === "brawl" || (S.live && S.live.players.length > 0 && S.live.players.length <= 8);
-    html = `<section class="card hud beli"><h3>Beli</h3><div class="empty">${isBrawl ? "Brawl 4v4: Pilih item dari 3 draft acak tiap ronde" : "Menunggu live item…"}</div></section>`;
+  } else if (WIDGET === "buy") {
+    if (S.matchId || S.live || S.connected || S.game || S.force || editing) {
+      const heroId = m?.heroId ?? S.live?.players[0]?.heroId ?? S.pregameHero ?? S.selectedRosterHero ?? null;
+      if (heroId && (!S.heroInfo || S.heroInfo.hero.id !== heroId)) void loadHero(heroId);
+      html = startingItemsHud(heroId);
+    } else {
+      html = "";
+    }
   } else if (WIDGET === "win" && !HUD.focus) {
     if (S.matchId || S.live) {
       const isBrawl = S.live?.gameMode === "brawl" || (S.live && S.live.players.length > 0 && S.live.players.length <= 8);
@@ -2640,12 +2738,22 @@ async function widgetBoot() {
     S.matchId = d.matchId;
     S.heroes = new Map(d.heroes);
     S.scout = d.scout;
+    if (d.pregameHero !== undefined) {
+      S.pregameHero = d.pregameHero;
+      try {
+        if (d.pregameHero) localStorage.setItem("dlm_pregame_hero", String(d.pregameHero));
+      } catch {}
+    }
+    if (d.heroInfo !== undefined) S.heroInfo = d.heroInfo;
     renderWidget();
   });
   await listen<boolean>("edit-mode", (e) => {
     editing = e.payload;
     renderWidget();
   });
+  if (S.pregameHero && !S.heroInfo) {
+    void loadHero(S.pregameHero);
+  }
   renderWidget();
   await emit("widget-ready", WIDGET);
 }
@@ -2773,8 +2881,11 @@ async function boot() {
     try {
       const meta = await api<{ heroes: MetaHero[] }>("/api/meta");
       S.heroes = new Map(meta.heroes.map((h) => [h.heroId, h]));
-      if (!S.selectedRosterHero && meta.heroes.length) {
-        S.selectedRosterHero = S.pregameHero ?? meta.heroes[0].heroId;
+      if (S.pregameHero) {
+        S.selectedRosterHero = S.pregameHero;
+        void loadHero(S.pregameHero);
+      } else if (!S.selectedRosterHero && meta.heroes.length) {
+        S.selectedRosterHero = meta.heroes[0].heroId;
         void loadHero(S.selectedRosterHero);
       }
       S.error = "";

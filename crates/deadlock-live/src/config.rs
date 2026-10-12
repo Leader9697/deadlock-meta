@@ -94,8 +94,8 @@ impl Default for Config {
             account_id: None,
             console_log: None,
             process_names: vec!["deadlock.exe".into(), "project8.exe".into(), "citadel.exe".into()],
-            poll_process_ms: 3000,
-            poll_log_ms: 750,
+            poll_process_ms: 1500,
+            poll_log_ms: 500,
             log: LogPatterns::default(),
             live: LiveQuery::default(),
             web_env: BTreeMap::new(),
@@ -113,11 +113,13 @@ impl Default for LogPatterns {
                 // Lobby 174168628286840337 for Match 112973749 created
                 r"^(?:\S+ \S+ )?Lobby \d+ for Match (?P<id>\d{6,}) created".into(),
                 // General match_id lines (e.g. match_id=12345678, match_id: 12345678, match_id 12345678)
-                r"\bmatch_id[=:\s]+(?P<id>\d{6,})".into(),
+                r"\bmatch_?id\b[^\d\n\r]{1,16}(?P<id>\d{6,12})".into(),
+                r#"["']?match_id["']?\s*[:=]\s*["']?(?P<id>\d{6,12})["']?"#.into(),
                 // Match 12345678 created / Entering match 12345678 / Match: 12345678
                 r"\bMatch(?:[:\s]+|#)(?P<id>\d{6,})".into(),
                 // Connecting to [U:1:...] / match_id=12345678
                 r"Connecting to .*match_id=(?P<id>\d{6,})".into(),
+                r"server_steam_id:.*match_id=(?P<id>\d{6,12})".into(),
             ],
             // [SteamNetSockets] AuthStatus (steamid:76561198802383751):  OK  (OK)
             self_steam: vec![
@@ -276,7 +278,7 @@ mod tests {
         let s = toml::to_string_pretty(&Config::default()).unwrap();
         let c: Config = toml::from_str(&s).unwrap();
         assert_eq!(c.live.queries, Config::default().live.queries);
-        assert_eq!(c.log.match_id.len(), 5);
+        assert_eq!(c.log.match_id.len(), 7);
     }
 
     #[test]
@@ -306,6 +308,6 @@ sql = "SELECT m_steamID AS account_id FROM CCitadelPlayerController"
         assert_eq!(c.site_base, "https://meta.example");
         assert_eq!(c.log.match_id, vec!["x(?P<id>\\d+)".to_string()]);
         assert_eq!(c.log.self_steam.len(), 2); // untouched → default (authstatus + server validated)
-        assert_eq!(c.poll_log_ms, 750);
+        assert_eq!(c.poll_log_ms, 500);
     }
 }
