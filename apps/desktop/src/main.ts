@@ -53,41 +53,60 @@ interface Settings {
   profile?: SteamProfile | null;
 }
 
-const HERO_CDN_SLUGS: Record<number, string> = {
+const HERO_ASSET_SLUGS: Record<number, string> = {
   1: "inferno",
-  2: "seven",
-  3: "vindicta",
-  4: "lady_geist",
-  6: "abrams",
+  2: "gigawatt",
+  3: "hornet",
+  4: "spectre",
+  6: "bull",
   7: "wraith",
-  8: "mcginnis",
-  10: "paradox",
-  11: "dynamo",
+  8: "engineer",
+  10: "chrono",
+  11: "sumo",
   12: "kelvin",
   13: "haze",
-  14: "holliday",
+  14: "astro",
   15: "bebop",
-  17: "grey_talon",
-  18: "mo_and_krill",
+  16: "nano",
+  17: "archer",
+  18: "digger",
   19: "shiv",
-  20: "ivy",
+  20: "tengu",
   25: "warden",
   27: "yamato",
   31: "lash",
   35: "viscous",
-  48: "mirage",
-  50: "calico",
-  52: "viper",
-  53: "magician",
-  54: "wrecker",
-  56: "vampirebat",
-  58: "tokamak",
+  50: "synth",
+  52: "mirage",
+  58: "kali",
+  60: "magician",
+  63: "vampirebat",
+  64: "drifter",
+  65: "priest",
+  66: "frank",
+  67: "bookworm",
+  69: "doorman",
+  72: "punkgoat",
+  76: "necro",
+  77: "fencer",
+  79: "familiar",
+  80: "werewolf",
+  81: "unicorn",
+  84: "ratking",
+  85: "chessmaster",
+  88: "baba",
 };
 
-function getHeroCdnIcon(id: number): string | null {
-  const slug = HERO_CDN_SLUGS[id];
-  return slug ? `https://static.bigbrain.gg/deadlock-img/assets-api-res/images/heroes/${slug}_sm.webp` : null;
+function getHeroAssetIcon(id: number): string | null {
+  const slug = HERO_ASSET_SLUGS[id];
+  return slug ? `https://assets-bucket.deadlock-api.com/assets-api-res/images/heroes/${slug}_sm.webp` : null;
 }
+
+const failedHeroIcons = new Set<string>();
+(window as unknown as { __onHeroIconError: (el: HTMLImageElement, url: string) => void }).__onHeroIconError = (el, url) => {
+  failedHeroIcons.add(url);
+  el.style.display = "none";
+};
 
 // ---------- slim shapes of the website's /api responses ----------
 interface MetaHero { heroId: number; name: string; icon?: string; winrate: number; tier: string }
@@ -285,12 +304,12 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
 
 function heroIcon(id: number, cls = "ico") {
   const h = S.heroes.get(id);
-  const cdn = getHeroCdnIcon(id);
-  const fallback = h?.icon ? esc(h.icon) : "";
-  if (cdn) {
-    return `<img class="${cls}" src="${cdn}" onerror="if(this.dataset.tried!=='1'){this.dataset.tried='1';if('${fallback}'){this.src='${fallback}'}else{this.style.display='none'}}else{this.style.display='none'}" alt="" title="${esc(h?.name ?? "")}">`;
+  const src = h?.icon || getHeroAssetIcon(id);
+  const name = h?.name ?? "";
+  if (src && !failedHeroIcons.has(src)) {
+    return `<img class="${cls}" src="${esc(src)}" alt="${esc(name)}" title="${esc(name)}" loading="lazy" onerror="window.__onHeroIconError(this,'${esc(src)}')">`;
   }
-  return h?.icon ? `<img class="${cls}" src="${fallback}" alt="" title="${esc(h.name)}">` : `<span class="${cls}"></span>`;
+  return `<span class="${cls}"></span>`;
 }
 const me = () => {
   if (!S.live) return undefined;

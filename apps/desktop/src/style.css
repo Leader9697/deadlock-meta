@@ -127,7 +127,7 @@ kbd {
 .small { font-size: 11px; }
 .win { color: var(--win); } .loss { color: var(--loss); }
 .w { color: var(--weapon); } .v { color: var(--vitality); } .s { color: var(--spirit); }
-.ico { width: 26px; height: 26px; border-radius: 5px; object-fit: cover; background: var(--panel2); flex: none; }
+.ico { width: 26px; height: 26px; aspect-ratio: 1; display: inline-block; vertical-align: middle; border-radius: 5px; object-fit: cover; background: var(--panel2); flex: none; }
 .ico.sm { width: 18px; height: 18px; border-radius: 4px; }
 .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tag { font-size: 9px; font-weight: 700; padding: 1px 5px; border-radius: 3px; background: var(--panel2); }
