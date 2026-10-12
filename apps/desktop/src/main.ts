@@ -7,7 +7,7 @@ import { emit, listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import type { BuildStep, DeathPattern, DeathReview, DraftOddsResult, HeroCombo, EnemyMatchup, ImbueAdvice, ItemPlay, GamePlan, LiveState, MacroPlan, MatchLog, PlayerScout, TeamPhaseCompare, Tip, WinSmoothState, MacroHoldState, TipHoldState } from "@deadlock/core";
-import { formatClock, smoothWinProb, holdMacroPlan, stabilizeTips, computeLagSeconds, filterPendingBuys, computeSoulsPacing, calibrateProb } from "@deadlock/core";
+import { detectMode, formatClock, smoothWinProb, holdMacroPlan, stabilizeTips, computeLagSeconds, filterPendingBuys, computeSoulsPacing, calibrateProb } from "@deadlock/core";
 
 // ---------- engine events (Rust serde: tag "type", kebab-case) ----------
 type EngineEvent =
@@ -51,6 +51,8 @@ interface Settings {
   accountId: number | null;
   configPath: string;
   profile?: SteamProfile | null;
+  /** shared secret for the site's private routes (/api/me/*) */
+  apiToken?: string;
 }
 
 const HERO_ASSET_SLUGS: Record<number, string> = {
@@ -98,24 +100,33 @@ const HERO_ASSET_SLUGS: Record<number, string> = {
 };
 
 function getHeroAssetIcon(id: number): string | null {
-  const slug = HERO_ASSET_SLUGS[id];
+  // the site sends each hero's slug (from its class name); the table covers older sites
+  const slug = S.heroes.get(id)?.slug ?? HERO_ASSET_SLUGS[id];
   return slug ? `https://assets-bucket.deadlock-api.com/assets-api-res/images/heroes/${slug}_sm.webp` : null;
 }
 
 const failedHeroIcons = new Set<string>();
-(window as unknown as { __onHeroIconError: (el: HTMLImageElement, url: string) => void }).__onHeroIconError = (el, url) => {
-  failedHeroIcons.add(url);
-  el.style.display = "none";
-};
+// one capturing listener instead of inline onerror="" (inline handlers are blocked by the CSP
+// and were an injection point for URLs that come from the API)
+document.addEventListener(
+  "error",
+  (e) => {
+    const el = e.target;
+    if (!(el instanceof HTMLImageElement) || !el.dataset.heroIcon) return;
+    failedHeroIcons.add(el.getAttribute("src") ?? "");
+    el.style.display = "none";
+  },
+  true,
+);
 
 // ---------- slim shapes of the website's /api responses ----------
-interface MetaHero { heroId: number; name: string; icon?: string; winrate: number; tier: string }
+interface MetaHero { heroId: number; name: string; icon?: string | null; slug?: string; winrate: number; tier: string }
 interface HeroInfo {
   hero: { id: number; name: string };
   meta?: MetaHero | null;
   phases: { phases: Record<"early" | "mid" | "late", { winrate: number; matches: number }>; peak: string | null; scaling: number } | null;
   builds: { id: number; name: string; winrate: number; matches: number }[];
-  itemsByTier?: Record<string, { id: number; name: string; slot: "weapon" | "vitality" | "spirit"; winrate: number; delta: number; avgBuyTimeS?: number }[]>;
+  itemsByTier?: Record<string, { id: number; name: string; slot: "weapon" | "vitality" | "spirit"; cost?: number | null; winrate: number; delta: number; avgBuyTimeS?: number }[]>;
   counters?: {
     advantages: { heroId: number; name: string; delta: number; winrate: number }[];
     threats: { heroId: number; name: string; delta: number; winrate: number }[];
@@ -127,6 +138,8 @@ interface LiveResp {
   teamNetWorth: [number, number];
   netWorthLead: number;
   winProbability: number | null;
+  /** server value before calibration + smoothing (set by the overlay, logged for calibration) */
+  winRaw?: number | null;
   winModel: { matches: number; samples: number } | null;
   empirical: { from: number; to: number; leadMin: number; leadMax: number; winrate: number; n: number; leaderIsMe: boolean } | null;
   trend: { seconds: number; leadDelta: number } | null;
@@ -261,7 +274,7 @@ const S = {
     }
   })(),
   layout: null as { widgets: Record<string, { enabled: boolean; w: number; h: number }> } | null,
-  postMatchSummary: null as { matchId: number; won: boolean; durationS: number; netWorth: number; kda: string } | null,
+  postMatchSummary: null as { matchId: number; won: boolean | null; durationS: number; netWorth: number; kda: string } | null,
 };
 
 const $ = (id: string) => document.getElementById(id)!;
@@ -301,7 +314,12 @@ const SLOT_CLS = { weapon: "w", vitality: "v", spirit: "s" } as const;
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const base = S.settings?.siteBase ?? "http://localhost:3000";
-  const res = await fetch(`${base.replace(/\/$/, "")}${path}`, init);
+  // the token only goes to the private routes: a custom header makes the webview send a
+  // CORS preflight, which the public routes do not answer
+  const token = S.settings?.apiToken;
+  const headers = new Headers(init?.headers);
+  if (token && path.startsWith("/api/me/")) headers.set("x-dlm-token", token);
+  const res = await fetch(`${base.replace(/\/$/, "")}${path}`, { ...init, headers });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     let msg = body;
@@ -318,7 +336,7 @@ function heroIcon(id: number, cls = "ico") {
   const src = h?.icon || getHeroAssetIcon(id);
   const name = h?.name ?? "";
   if (src && !failedHeroIcons.has(src)) {
-    return `<img class="${cls}" src="${esc(src)}" alt="${esc(name)}" title="${esc(name)}" loading="lazy" onerror="window.__onHeroIconError(this,'${esc(src)}')">`;
+    return `<img class="${cls}" src="${esc(src)}" alt="${esc(name)}" title="${esc(name)}" loading="lazy" data-hero-icon="1">`;
   }
   return `<span class="${cls}"></span>`;
 }
@@ -330,11 +348,12 @@ const me = () => {
     if (found) return found;
   }
   if (S.pregameHero) {
+    // a hero can be picked only once per match, so the hero I chose finds me
     const foundByHero = S.live.players.find((p) => p.heroId === S.pregameHero);
     if (foundByHero) return foundByHero;
   }
-  // Fallback: pick the first friendly player on team Amber (0), or first player if single team
-  return S.live.players.find((p) => p.team === 0) ?? S.live.players[0];
+  // no guessing: showing someone else's souls/items as mine is worse than an honest error
+  return undefined;
 };
 async function loadHero(id: number) {
   if (S.heroInfo?.hero.id === id) return;
@@ -435,7 +454,7 @@ function onHotkey(k: string) {
       const firstEarly = earlyItems.find((x) => !S.pending.some((p) => p.itemId === x.id));
       if (firstEarly) {
         if (!S.pending.some((p) => p.itemId === firstEarly.id)) {
-          S.pending.push({ itemId: firstEarly.id, name: firstEarly.name, cost: 500, atS: S.live?.gameTimeS ?? 0, matchId: S.matchId });
+          S.pending.push({ itemId: firstEarly.id, name: firstEarly.name, cost: firstEarly.cost ?? 0, atS: S.live?.gameTimeS ?? 0, matchId: S.matchId });
         }
         toast(`✓ ${firstEarly.name} ditandai sudah dibeli`);
         render();
@@ -500,6 +519,7 @@ async function postLive(force = false) {
     lastLiveSuccess = Date.now();
     const t = S.liveResp.gameTimeS;
     const rawWin = S.liveResp.winProbability;
+    S.liveResp.winRaw = rawWin;
     const calWin = summary?.calibration ? calibrateProb(rawWin, summary.calibration.reliability) : rawWin;
     S.liveResp.winProbability = smoothWin(calWin, t);
     S.liveResp.macro = holdMacro(S.liveResp.macro, t);
@@ -569,6 +589,7 @@ function recordSnapshot(r: LiveResp, m: LiveState["players"][number]) {
     log.snapshots.push({
       t: r.gameTimeS,
       winP: r.winProbability,
+      winRaw: r.winRaw ?? null,
       lead: r.netWorthLead,
       phase: r.phase,
       macro: r.macro?.action,
@@ -871,7 +892,8 @@ function onEngine(ev: EngineEvent) {
       S.ended = true;
       const m = me();
       if (m && S.live && S.matchId) {
-        const won = S.live.winningTeam !== undefined ? S.live.winningTeam === m.team : false;
+        // no game-over row (stream cut first): unknown until the match history has it
+        const won = S.live.winningTeam !== undefined ? S.live.winningTeam === m.team : null;
         S.postMatchSummary = {
           matchId: S.matchId,
           won,
@@ -883,6 +905,14 @@ function onEngine(ev: EngineEvent) {
       render();
       broadcast(true);
       void postLive(true).then(() => saveLog(true));
+      if (S.postMatchSummary?.won == null) {
+        // the summary backfills the result from the match history (API has it a few min later)
+        for (const delayMs of [90_000, 240_000, 600_000])
+          window.setTimeout(() => {
+            summaryAt = 0;
+            void loadSummary();
+          }, delayMs);
+      }
       break;
     }
     case "error":
@@ -944,7 +974,7 @@ function renderStatus() {
     const stale = staleSeconds();
     const modeBadge = S.liveResp?.mode
       ? ` <span class="tag ${S.liveResp.mode.isBrawl ? "hot" : S.liveResp.mode.isRanked ? "main" : "ok"}">${esc(S.liveResp.mode.label)}</span>`
-      : S.live.players.length > 0 && S.live.players.length <= 8
+      : detectMode(S.live).isBrawl
         ? ` <span class="tag hot">Brawl 4v4</span>`
         : "";
     html = `<b>LIVE</b> #${S.matchId ?? "?"}${modeBadge} · ${formatClock(S.live.gameTimeS)} <span class="small">· di game ±${formatClock(S.live.gameTimeS + lagSeconds())} · telat ${lagSeconds()} dtk</span>${lagSeconds() >= 150 ? ` <span class="stale">⚠ broadcast tertinggal ${Math.round(lagSeconds() / 60)} mnt: tekan ✓ Sudah beli setelah belanja</span>` : ""}${
@@ -1626,8 +1656,19 @@ interface OverlayData {
 }
 /** why the bundled site is not reachable (from the Rust side), shown in Status koneksi */
 let webNote = "";
-/** form controls that must not be re-rendered while they have focus */
+/**
+ * Form controls a re-render must not replace while focused (an open dropdown closes, typed
+ * text and the caret jump). Any text field / select / textarea qualifies by itself, so a new
+ * input never needs to be registered; the id list is kept for controls that are not one.
+ */
 const GUARDED = new Set(["matchInput", "heroSel", "rosterSearchInput", "omniSearchInput"]);
+const NON_TEXT_INPUTS = new Set(["button", "checkbox", "radio", "range", "color", "submit", "reset", "file", "image"]);
+function isGuarded(el: Element | null): boolean {
+  if (!(el instanceof HTMLElement)) return false;
+  if (GUARDED.has(el.id)) return true;
+  if (el instanceof HTMLSelectElement || el instanceof HTMLTextAreaElement) return true;
+  return el instanceof HTMLInputElement && !NON_TEXT_INPUTS.has(el.type);
+}
 let lastBroadcast = "";
 function broadcast(force = false) {
   const now = Date.now();
@@ -1854,11 +1895,20 @@ function renderMetaView() {
   </div>`;
 }
 
-function renderLastMatchCard(pm: { matchId: number; won: boolean; durationS: number; netWorth: number; kda: string }) {
-  return `<section class="card" style="border:1px solid ${pm.won ? "var(--win)" : "var(--loss)"};background:rgba(${pm.won ? "74,222,128" : "248,113,113"},0.08)">
+function renderLastMatchCard(pm: { matchId: number; won: boolean | null; durationS: number; netWorth: number; kda: string }) {
+  if (pm.won == null) {
+    // broadcast ended without the game-over row: take the result from the match history
+    const h = summary?.matches?.find((x) => x.match_id === pm.matchId);
+    if (h) pm.won = h.match_result === h.player_team;
+  }
+  const won = pm.won;
+  const color = won == null ? "var(--muted)" : won ? "var(--win)" : "var(--loss)";
+  const bg = won == null ? "255,255,255" : won ? "74,222,128" : "248,113,113";
+  const label = won == null ? "HASIL BELUM ADA (menunggu data match)" : won ? "VICTORY (MENANG) 🎉" : "DEFEAT (KALAH)";
+  return `<section class="card" style="border:1px solid ${color};background:rgba(${bg},0.08)">
     <h3>Ringkasan Match Terakhir <small>Match #${pm.matchId}</small></h3>
     <div class="row" style="justify-content:space-between;margin-top:4px">
-      <span style="font-size:16px;font-weight:bold;color:${pm.won ? "var(--win)" : "var(--loss)"}">${pm.won ? "VICTORY (MENANG) 🎉" : "DEFEAT (KALAH)"}</span>
+      <span style="font-size:16px;font-weight:bold;color:${color}">${label}</span>
       <span class="small muted">Durasi: ${formatClock(pm.durationS)}</span>
     </div>
     <div class="row small" style="margin-top:6px;gap:12px">
@@ -2198,7 +2248,7 @@ function render() {
   }
 
   // don't wipe form controls while focused
-  if (GUARDED.has((document.activeElement as HTMLElement | null)?.id ?? "")) {
+  if (isGuarded(document.activeElement)) {
     pendingRender = true;
     return;
   }
@@ -2389,7 +2439,7 @@ document.addEventListener("click", async (e) => {
 
 let pendingRender = false;
 document.addEventListener("focusout", (e) => {
-  if (GUARDED.has((e.target as HTMLElement).id) && pendingRender) {
+  if (isGuarded(e.target as Element | null) && pendingRender) {
     pendingRender = false;
     setTimeout(render, 0);
   }
@@ -2496,10 +2546,10 @@ function situasiHud(r: LiveResp) {
       ? `<div class="hud-line ${sp.verdict === "fight" ? "win" : "loss"}">⚡ ${sp.verdict === "fight" ? "Spike tim kamu" : "Spike lawan"}: <b>${sp.verdict === "fight" ? "cari fight" : "tahan fight"}</b> sampai ${sp.untilClock ?? `±${Math.round(sp.windowLeft)}s`}</div>`
       : "";
   const mc = r.macro;
-  const isBrawl = !!(r.mode?.isBrawl || (S.live && S.live.players.length <= 8));
+  const isBrawl = !!(r.mode?.isBrawl || (S.live && detectMode(S.live).isBrawl));
   // Clean HUD: Show 1 focused lane note if critical (e.g. pushed/threatened) instead of 4 cryptic arrow symbols
   const lanes = isBrawl
-    ? `<div class="hud-line win">🥊 <b>Street Brawl 4v4</b> · Draft 3 item acak di awal ronde</div>`
+    ? `<div class="hud-line win">🥊 <b>Street Brawl 4v4</b></div>`
     : mc?.lane
       ? `<div class="hud-line small" style="opacity:.9">🚩 Fokus Lane: <b class="${mc.lane.status === "kita tekan" ? "win" : mc.lane.status === "kita ditekan" ? "loss" : "brass"}">${esc(mc.lane.name)}</b> (${esc(mc.lane.status)})</div>`
       : "";
@@ -2674,15 +2724,29 @@ function renderWidget() {
     } else if (r) {
       html = coachCard(r, true);
     } else if (S.matchId || S.live || S.connected || S.game || S.force) {
-      const isBrawl = S.live?.gameMode === "brawl" || (S.live && S.live.players.length > 0 && S.live.players.length <= 8);
-      const selHeroId = m?.heroId ?? S.pregameHero ?? (S.live?.players[0]?.heroId ?? null);
+      const isBrawl = !!S.live && detectMode(S.live).isBrawl;
+      const selHeroId = m?.heroId ?? S.pregameHero ?? null;
       const heroName = selHeroId ? (S.heroes.get(selHeroId)?.name ?? S.heroInfo?.hero.name ?? "") : "";
-      const title = isBrawl ? "Street Brawl 4v4" : heroName ? `Fase Awal · ${heroName}` : (S.matchId ? `Match #${S.matchId}` : "Menyiapkan Coach");
-      const desc = isBrawl
-        ? "Draft 3 item acak per ronde · Menunggu live data…"
-        : heroName
-          ? "Beli 1 item Tier 1 di base (500 souls) sebelum zipline. Broadcast sinkron ~1-2 menit."
-          : (S.matchId ? `Match terdeteksi (#${S.matchId}) · Menghubungkan ke broadcast live…` : "Menghubungkan ke broadcast live…");
+      // the full lineup is in and I am not in it: say so instead of a forever "connecting"
+      const missingMe = !!S.live && !m && S.live.players.length >= 8 && S.live.gameTimeS >= 60;
+      const title = missingMe
+        ? "Akun kamu tidak ada di match ini"
+        : isBrawl
+          ? "Street Brawl 4v4"
+          : heroName
+            ? `Fase Awal · ${heroName}`
+            : S.matchId
+              ? `Match #${S.matchId}`
+              : "Menyiapkan Coach";
+      const desc = missingMe
+        ? `Main pakai akun lain? Isi account_id di ${S.settings?.configPath ?? "deadlock-live.toml"}.`
+        : isBrawl
+          ? "Menunggu live data…"
+          : heroName
+            ? "Beli item Tier 1 di base sebelum zipline. Broadcast sinkron ~1-2 menit."
+            : S.matchId
+              ? `Match terdeteksi (#${S.matchId}) · Menghubungkan ke broadcast live…`
+              : "Menghubungkan ke broadcast live…";
       html = `<section class="coach calm compact hud"><div class="coach-main"><span class="coach-ico">⏱</span><div class="coach-txt"><b>${esc(title)}</b><p>${esc(desc)}</p></div></div></section>`;
     } else {
       const selHeroId = S.pregameHero;

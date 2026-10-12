@@ -14,7 +14,7 @@ const nextConfig: NextConfig = {
         headers: [
           { key: "Access-Control-Allow-Origin", value: process.env.API_CORS_ORIGIN ?? "*" },
           { key: "Access-Control-Allow-Methods", value: "GET, POST, OPTIONS" },
-          { key: "Access-Control-Allow-Headers", value: "content-type" },
+          { key: "Access-Control-Allow-Headers", value: "content-type, x-dlm-token" },
         ],
       },
     ];

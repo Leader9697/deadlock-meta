@@ -60,11 +60,27 @@ export interface MacroInput {
   heroName: (id: number) => string;
 }
 
-/** Total stages destroyed (0..12) given an objective mask */
-export function countDestroyedStages(mask: number | undefined): number {
+/**
+ * Objective lane indexes (1..4) of the lanes players are actually assigned to. A map with
+ * fewer lanes leaves the unused lane's bits clear, which would read as "destroyed".
+ */
+export function activeLaneIndexes(players: { lane?: number }[]): number[] {
+  const idx = new Set<number>();
+  for (const p of players) {
+    const i = p.lane != null ? LANE_ORDER.indexOf(p.lane) : -1;
+    if (i >= 0) idx.add(i + 1);
+  }
+  return [...idx].sort((a, b) => a - b);
+}
+
+/**
+ * Total stages destroyed given an objective mask (3 per lane). Pass `lanes` (from
+ * `activeLaneIndexes`) to count only the lanes in play; without it all 4 are counted.
+ */
+export function countDestroyedStages(mask: number | undefined, lanes?: number[]): number {
   if (typeof mask !== "number" || Number.isNaN(mask)) return 0;
   let destroyed = 0;
-  for (let idx = 1; idx <= 4; idx++) {
+  for (const idx of lanes && lanes.length ? lanes : [1, 2, 3, 4]) {
     // stage 0: guardian down (bit idx clear)
     if (!bit(mask, idx)) destroyed++;
     // stage 1: walker down (bit 4+idx clear)

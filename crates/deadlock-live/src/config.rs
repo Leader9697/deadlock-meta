@@ -34,6 +34,10 @@ pub struct Config {
     /// Submit your own matches (from Steam's http cache) to deadlock-api so your full
     /// history and post-match reviews are available. Same as the official ingest tool.
     pub ingest_matches: bool,
+    /// Folder for small runtime state (spectate quota) so it survives an app restart.
+    /// Set by the app, not stored in the toml.
+    #[serde(skip)]
+    pub state_dir: Option<PathBuf>,
 }
 
 /// Regexes run on every new console.log line. Named group `id` is required.
@@ -104,6 +108,7 @@ impl Default for Config {
             live: LiveQuery::default(),
             web_env: BTreeMap::new(),
             ingest_matches: true,
+            state_dir: None,
         }
     }
 }

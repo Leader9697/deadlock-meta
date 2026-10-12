@@ -1,5 +1,7 @@
 //! End-to-end: manual match id → broadcast url → SSE rows → LiveState events, against a mock API.
 
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use deadlock_live::{Command, Config, EngineEvent};
@@ -10,9 +12,13 @@ use tokio::sync::mpsc;
 async fn mock_api(spectate_down: bool) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
+    // the objectives stream is cut once without an end event (proxy timeout): the engine
+    // must reconnect instead of treating it as the end of the broadcast
+    let objective_calls = Arc::new(AtomicUsize::new(0));
     tokio::spawn(async move {
         loop {
             let (mut sock, _) = listener.accept().await.unwrap();
+            let objective_calls = objective_calls.clone();
             tokio::spawn(async move {
                 let mut buf = vec![0u8; 8192];
                 let n = sock.read(&mut buf).await.unwrap_or(0);
@@ -51,12 +57,15 @@ async fn mock_api(spectate_down: bool) -> String {
                             r#"data: {"tick":6,"purchase_slot":1,"item_id":2002,"sold":false}"#,
                         ]
                     } else if path.contains("ObjectiveMaskEvent") {
+                        if objective_calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                            return; // connection closes with no rows and no end event
+                        }
                         vec![r#"data: {"tick":7,"obj_mask_0":65535,"obj_mask_1":65531}"#]
                     } else if path.contains("GameOverEvent") {
                         tokio::time::sleep(Duration::from_millis(250)).await;
                         vec![r#"data: {"tick":9,"winning_team":2}"#]
                     } else {
-                        panic!("unexpected query {path}")
+                        vec![] // other default queries (kills, flex slots, death recap): no rows
                     };
                     for r in rows {
                         let _ = sock.write_all(format!("{r}\n\n").as_bytes()).await;

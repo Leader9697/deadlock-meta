@@ -298,7 +298,7 @@ mod tests {
         let mut f = std::fs::OpenOptions::new().append(true).open(&p).unwrap();
         write!(f, "a\r\nb\npart").unwrap();
         assert_eq!(t.read_new_lines().unwrap(), vec!["a", "b"]);
-        write!(f, "ial\n").unwrap();
+        writeln!(f, "ial").unwrap();
         assert_eq!(t.read_new_lines().unwrap(), vec!["partial"]);
 
         std::fs::write(&p, "new session\n").unwrap(); // truncated

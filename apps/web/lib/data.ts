@@ -21,11 +21,14 @@ import {
   type Rank,
   type ScoutTarget,
 } from "@deadlock/core";
+import { diskFallback } from "./disk-cache";
 import { AUTO, SINCE_PATCH, type Filters } from "./filters";
 
 export const api = createClient({
   baseUrl: process.env.DEADLOCK_API_BASE || undefined,
   apiKey: process.env.DEADLOCK_API_KEY || undefined,
+  // offline: last good answer from disk instead of an empty overlay
+  fallback: diskFallback,
 });
 
 // Cache windows. Analytics on deadlock-api itself are cached 6h per query,

@@ -269,8 +269,8 @@ const pts = (x: number) => `${x >= 0 ? "+" : ""}${(x * 100).toFixed(1)}%`;
 /** Best shop item answering a need, for this phase and this hero. */
 export function pickForNeed(need: Need, input: AdaptiveInput, exclude: Set<number>): { item: LabItem; score: number; why: string } | null {
   const phase = phaseAt(input.gameTimeS);
-  // prefer the phase's tier range; only drop one tier if nothing answers the need there
-  return pickInTiers(need, input, exclude, TIER_FLOOR[phase]) ?? pickInTiers(need, input, exclude, TIER_FLOOR[phase] - 1);
+  // never below the phase's tier floor (late game does not recommend cheap tiers, even for a need)
+  return pickInTiers(need, input, exclude, TIER_FLOOR[phase]);
 }
 
 function pickInTiers(need: Need, input: AdaptiveInput, exclude: Set<number>, floor: number): { item: LabItem; score: number; why: string } | null {

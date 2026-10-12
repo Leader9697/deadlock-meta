@@ -1,11 +1,11 @@
 import Link from "next/link";
-import { calibrate, personalHeroes, tiltCheck } from "@deadlock/core";
+import { backfillOutcomes, calibrate, personalHeroes, tiltCheck } from "@deadlock/core";
 import { RememberAccount } from "@/components/RememberAccount";
 import { Delta, EmptyState, HeroIcon, Panel, Pct } from "@/components/ui";
 import { getHeroMap, getHeroMeta, getMatchHistory, getPlayerHeroes } from "@/lib/data";
 import { AUTO } from "@/lib/filters";
 import { loadHabits } from "@/lib/habits";
-import { listMatchLogs } from "@/lib/store";
+import { listMatchLogs, saveMatchLog } from "@/lib/store";
 
 export const dynamic = "force-dynamic";
 
@@ -70,6 +70,8 @@ export default async function MePage({ searchParams }: { searchParams: Promise<R
     getHeroMap(),
     listMatchLogs(account),
   ]);
+  // broadcasts that ended before the game-over row: take the result from the match history
+  await Promise.allSettled(backfillOutcomes(logs, hist).map((l) => saveMatchLog(l)));
   const hb = await loadHabits(account, logs).catch(() => null);
   const recent = [...hist].sort((a, b) => b.start_time - a.start_time);
   const tilt = tiltCheck(recent.map((m) => m.match_result === m.player_team));

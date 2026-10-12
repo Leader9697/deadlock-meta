@@ -59,10 +59,15 @@ export interface ModeInfo {
   label: string;
 }
 
+/** seconds of game time after which a short player list means Street Brawl */
+export const BRAWL_COUNT_AFTER_S = 120;
+
 export function detectMode(state: LiveState): ModeInfo {
+  // the broadcast sends players one by one: a short list early on is not a 4v4 yet, so the
+  // player count only decides once the game has run a while and the mode row never came
   const isBrawl =
     state.gameMode === "brawl" ||
-    (state.players.length >= 2 && state.players.length <= 8);
+    (state.gameMode == null && state.gameTimeS >= BRAWL_COUNT_AFTER_S && state.players.length >= 2 && state.players.length <= 8);
   const isRanked = state.matchMode === "ranked";
   const gameMode: GameMode = isBrawl ? "brawl" : "normal";
   const matchMode: MatchMode = isRanked ? "ranked" : "unranked";
@@ -118,17 +123,24 @@ export interface NextBuy {
  * Turns counter scores into a "buy next" list for the current moment:
  * drops items already owned, prefers tiers that fit the current economy.
  */
-export function nextBuys(result: CounterResult, items: Map<number, Item>, me: LivePlayer, limit = 6): Record<ItemSlotType | "all", NextBuy[]> {
+export function nextBuys(
+  result: CounterResult,
+  items: Map<number, Item>,
+  me: LivePlayer,
+  limit = 6,
+  /** lowest tier worth buying in this phase (pass TIER_FLOOR[phase]): late game never lists cheap tiers */
+  minTier = 1,
+): Record<ItemSlotType | "all", NextBuy[]> {
   const owned = new Set(me.itemIds);
-  // Rough tier you should be shopping in for your net worth.
-  const tierCap = me.netWorth < 6000 ? 2 : me.netWorth < 16000 ? 3 : 4;
+  // Rough tier you should be shopping in for your net worth (never below the phase floor).
+  const tierCap = Math.max(minTier, me.netWorth < 6000 ? 2 : me.netWorth < 16000 ? 3 : 4);
   const budget = me.souls ?? Infinity;
 
   const pick = (list: CounterItem[]) =>
     list
       .filter((c) => c.score > 0 && !owned.has(c.itemId))
       .map((c) => ({ c, it: items.get(c.itemId) }))
-      .filter((x): x is { c: CounterItem; it: Item } => !!x.it && (x.it.item_tier ?? 1) <= tierCap)
+      .filter((x): x is { c: CounterItem; it: Item } => !!x.it && (x.it.item_tier ?? 1) <= tierCap && (x.it.item_tier ?? 1) >= minTier)
       .slice(0, limit)
       .map(({ c, it }) => ({ item: it, counter: c, affordable: (it.cost ?? 0) <= budget }));
 

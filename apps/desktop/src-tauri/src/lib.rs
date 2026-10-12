@@ -40,6 +40,8 @@ struct PublicSettings {
     account_id: Option<u32>,
     config_path: String,
     profile: Option<deadlock_live::steam::SteamProfile>,
+    /// sent as `x-dlm-token` so the site accepts the private match-log routes
+    api_token: String,
 }
 
 #[tauri::command]
@@ -412,10 +414,23 @@ pub fn run() {
             let dir = app.path().app_config_dir()?;
             std::fs::create_dir_all(&dir)?;
             let config_path = dir.join("deadlock-live.toml");
-            let cfg = Config::load(&config_path).unwrap_or_default();
+            let mut cfg = Config::load(&config_path).unwrap_or_default();
+            cfg.state_dir = Some(dir.clone());
 
+            // a remote site_base sets its own token in [web_env]; the bundled site gets ours
+            let api_token = cfg
+                .web_env
+                .get("DLM_INTERNAL_TOKEN")
+                .cloned()
+                .unwrap_or_else(|| webserver::load_or_create_token(&dir.join("web-token.txt")));
             // installed app: run the bundled website so no terminal is needed
-            let (child, note) = webserver::start(app.handle(), &cfg.site_base, cfg.api_key.as_deref(), &cfg.web_env);
+            let (child, note) = webserver::start(
+                app.handle(),
+                &cfg.site_base,
+                cfg.api_key.as_deref(),
+                &api_token,
+                &cfg.web_env,
+            );
             app.manage(WebServer(Mutex::new(child)));
             app.manage(WebNote(note));
 
@@ -440,6 +455,7 @@ pub fn run() {
                     account_id: cfg.account_id.or_else(deadlock_live::steam::local_account_id),
                     config_path: config_path.display().to_string(),
                     profile: deadlock_live::steam::local_steam_profile(),
+                    api_token,
                 },
             });
             if !taken.is_empty() {

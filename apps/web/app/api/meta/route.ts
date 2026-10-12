@@ -10,6 +10,10 @@ export async function GET(req: NextRequest) {
     filters: f,
     heroes: meta
       .filter((m) => heroes.has(m.heroId))
-      .map((m) => ({ ...m, name: heroes.get(m.heroId)!.name, icon: heroes.get(m.heroId)!.images.icon_image_small_webp })),
+      .map((m) => {
+        const h = heroes.get(m.heroId)!;
+        // slug lets the overlay build CDN icon URLs for heroes released after its build
+        return { ...m, name: h.name, icon: h.images.icon_image_small_webp ?? h.images.icon_image_small ?? null, slug: h.class_name.replace(/^hero_/, "") };
+      }),
   });
 }

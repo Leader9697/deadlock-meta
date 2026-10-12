@@ -40,7 +40,9 @@ import {
   type ItemSlotType,
   type LabItem,
   type LiveState,
+  activeLaneIndexes,
   countDestroyedStages,
+  detectMode,
 } from "@deadlock/core";
 import {
   getAbilityOrders,
@@ -174,7 +176,8 @@ export async function POST(req: NextRequest) {
   if (state.objectiveMasks) {
     const enemyMask = state.objectiveMasks[1 - me.team];
     const ourMask = state.objectiveMasks[me.team];
-    objectiveDelta = countDestroyedStages(enemyMask) - countDestroyedStages(ourMask);
+    const lanes = activeLaneIndexes(state.players);
+    objectiveDelta = countDestroyedStages(enemyMask, lanes) - countDestroyedStages(ourMask, lanes);
   }
   let flexSlotDelta: number | undefined;
   if (state.flexSlots) {
@@ -373,9 +376,8 @@ export async function POST(req: NextRequest) {
   }
   const ownedFeats = me.itemIds.map((id) => lab.get(id)).filter((x): x is LabItem => !!x && x.type === "upgrade").map((x) => features(x));
   const combo = heroCombo(myKit, ownedFeats);
-  const synergy = await getSynergy(f.days, f.badge).catch(() => []);
   const allyIds = new Set(state.players.filter((p) => p.team === me.team && p.accountId !== me.accountId).map((p) => p.heroId));
-  const bestAlly = synergiesFor(me.heroId, synergy, myWr)
+  const bestAlly = synergiesFor(me.heroId, synergies, myWr)
     .filter((x) => allyIds.has(x.heroId) && x.matches >= 100)
     .sort((a, b) => b.delta - a.delta)[0];
   let partner: { heroId: number; name: string; delta: number; why: string } | null = null;
@@ -430,7 +432,7 @@ export async function POST(req: NextRequest) {
   }
   const sellOk = !!sell && out.buildPath.some((st) => st.itemId === sell.forId) && !out.buildPath.some((st) => st.itemId === sell.sellId);
   if (sell && !sellOk) out.tips = out.tips.filter((t) => !t.title.startsWith(`Jual ${sell.sellName}`));
-  const buys = nextBuys(counter, items, me);
+  const buys = nextBuys(counter, items, me, 6, TIER_FLOOR[phase]);
   const slim = (xs: typeof buys.all) =>
     xs.map((b) => {
       const top = b.counter.perEnemy[0];
@@ -446,23 +448,15 @@ export async function POST(req: NextRequest) {
       };
     });
 
-  const isBrawl = (state.players.length > 0 && state.players.length <= 8) || state.gameMode === "brawl";
-  const isRanked = state.matchMode === "ranked";
-  const modeInfo = {
-    gameMode: isBrawl ? ("brawl" as const) : ("normal" as const),
-    matchMode: isRanked ? ("ranked" as const) : ("unranked" as const),
-    isBrawl,
-    isRanked,
-    label: isBrawl ? "Brawl 4v4" : isRanked ? "Ranked 6v6" : "Unranked 6v6",
-  };
-
-  if (isBrawl && state.winningTeam === undefined) {
-    out.tips.unshift({
+  const modeInfo = detectMode(state);
+  if (modeInfo.isBrawl && state.winningTeam === undefined) {
+    const brawlTip: Tip = {
       kind: "objective",
       priority: 88,
-      title: "Street Brawl 4v4 (Draft Ronde)",
-      detail: "Toko nonaktif. Saat ronde memberi 3 kartu acak, prioritaskan item counter terkuat & anti-heal vs 4 musuh.",
-    });
+      title: "Street Brawl 4v4",
+      detail: "Mode 4v4: item counter terkuat & anti-heal lebih berharga karena tiap fight melibatkan semua musuh.",
+    };
+    out.tips = [brawlTip, ...out.tips].slice(0, 3);
   }
 
   return NextResponse.json({

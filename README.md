@@ -1,14 +1,17 @@
 # Deadlock Meta
 
-Website meta Deadlock (tier list, item per hero, counter build, scouting pemain) + fondasi untuk app desktop Tauri.
+Website meta Deadlock (tier list, item per hero, counter build, scouting pemain) + overlay Windows
+(Tauri 2) yang membaca match live dari broadcast spectator Valve dan memberi saran di HUD.
 Data dari [deadlock-api.com](https://api.deadlock-api.com/docs) — gratis, tanpa key.
 
 ## Struktur
 
 ```
-packages/core   TypeScript murni: API client, statistik, algoritma counter, scouting.
-                Dipakai website sekarang, dan dipakai ulang oleh UI Tauri nanti.
-apps/web        Next.js 16 (App Router) + Tailwind 4
+packages/core        TypeScript murni: API client, statistik, counter, coach, build adaptif, kalibrasi.
+                     Dipakai website dan overlay.
+apps/web             Next.js 16 (App Router) + Tailwind 4. Juga server analisa overlay (/api/live, /api/me/*).
+apps/desktop         Overlay Tauri 2 (panel + widget HUD). Installer membawa website sebagai server lokal.
+crates/deadlock-live Rust: deteksi game, console.log, stream broadcast live (SQL deadlock-api).
 ```
 
 ## Jalankan
@@ -17,6 +20,10 @@ apps/web        Next.js 16 (App Router) + Tailwind 4
 npm install
 npm run dev          # http://localhost:3000
 npm run build && npm start
+npm run desktop      # overlay (tauri dev), butuh `npm run dev` jalan
+npm test             # vitest core + web
+npm run typecheck
+cargo test --workspace
 ```
 
 `.env.local` (opsional, lihat `apps/web/.env.example`):
@@ -26,6 +33,8 @@ npm run build && npm start
 | `DEADLOCK_API_KEY` | Naikkan limit analytics 200 → 400 req/menit |
 | `DEADLOCK_API_BASE` | Override base URL (mis. mock server untuk testing) |
 | `API_CORS_ORIGIN` | Kunci CORS `/api/*` ke origin app Tauri (default `*`) |
+| `DLM_INTERNAL_TOKEN` | Rahasia untuk route privat (`/api/me/log`, kebiasaan & kalibrasi). App terpasang mengisinya sendiri; tanpa token hanya `npm run dev` yang menerima log |
+| `DLM_DATA_DIR` | Folder log match overlay + salinan offline jawaban deadlock-api (default `apps/web/.data`) |
 
 Deploy paling gampang: Vercel (set root directory `apps/web`) atau `npm start` di VPS.
 
@@ -49,10 +58,17 @@ Deploy paling gampang: Vercel (set root directory `apps/web`) atau `npm start` d
 Semua JSON, CORS aktif.
 
 ```
-GET /api/meta?days=7&badge=61
-GET /api/counter?hero=6&enemies=1,13,25&days=7&badge=61
-GET /api/scout?ids=12345:6:0,67890:13:1      # account_id[:hero_id[:team]], max 12
+GET  /api/meta?days=7&badge=61
+GET  /api/hero/6
+GET  /api/counter?hero=6&enemies=1,13,25&days=7&badge=61
+GET  /api/scout?ids=12345:6:0,67890:13:1      # account_id[:hero_id[:team]], max 12
+POST /api/live                                # LiveState dari overlay → saran, build, win %
+GET  /api/me/summary?account=123              # tilt, hero terbaik (+ kebiasaan/kalibrasi dengan token)
+POST /api/me/log                              # log match overlay (header x-dlm-token)
 ```
+
+Kalau deadlock-api tidak bisa dihubungi, server memakai salinan jawaban terakhir dari disk
+(`DLM_DATA_DIR/api-cache`), jadi overlay tetap ada isinya saat API/proxy bermasalah.
 
 ## Cara kerja angka
 

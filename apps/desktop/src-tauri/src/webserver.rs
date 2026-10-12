@@ -75,6 +75,7 @@ pub fn start(
     app: &AppHandle,
     site_base: &str,
     api_key: Option<&str>,
+    token: &str,
     extra_env: &BTreeMap<String, String>,
 ) -> (Option<Child>, String) {
     let Some(port) = local_port(site_base) else {
@@ -115,6 +116,8 @@ pub fn start(
         .env("NODE_ENV", "production")
         .env("NEXT_TELEMETRY_DISABLED", "1")
         .env("DLM_PARENT_PID", std::process::id().to_string())
+        // private routes (/api/me/log) only answer requests that carry this token
+        .env("DLM_INTERNAL_TOKEN", token)
         .stdin(Stdio::null());
     if let Some(k) = api_key.filter(|k| !k.is_empty()) {
         cmd.env("DEADLOCK_API_KEY", k);
@@ -152,6 +155,39 @@ pub fn start(
     }
 }
 
+/// Token shared by the overlay and the bundled site, kept in a file so a site that is
+/// still running from the previous start accepts it too.
+pub fn load_or_create_token(path: &std::path::Path) -> String {
+    if let Ok(t) = std::fs::read_to_string(path) {
+        let t = t.trim();
+        if t.len() >= 32 && t.chars().all(|c| c.is_ascii_hexdigit()) {
+            return t.to_string();
+        }
+    }
+    let t = new_token();
+    let _ = std::fs::write(path, &t);
+    t
+}
+
+/// 128 random bits as hex, from the OS-seeded hasher keys (no extra crate needed).
+fn new_token() -> String {
+    use std::collections::hash_map::RandomState;
+    use std::hash::{BuildHasher, Hasher};
+    let part = |salt: u64| {
+        let mut h = RandomState::new().build_hasher();
+        h.write_u64(salt);
+        h.write_u128(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or_default(),
+        );
+        h.write_u32(std::process::id());
+        h.finish()
+    };
+    format!("{:016x}{:016x}", part(1), part(2))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -163,6 +199,19 @@ mod tests {
             PathBuf::from(r"C:\Apps\web")
         );
         assert_eq!(plain(PathBuf::from("/opt/app")), PathBuf::from("/opt/app"));
+    }
+
+    #[test]
+    fn token_is_created_once_and_reused() {
+        let dir = std::env::temp_dir().join(format!("dlm-token-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("web-token.txt");
+        let _ = std::fs::remove_file(&path);
+        let a = load_or_create_token(&path);
+        assert_eq!(a.len(), 32);
+        assert_eq!(load_or_create_token(&path), a);
+        assert_ne!(new_token(), new_token());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

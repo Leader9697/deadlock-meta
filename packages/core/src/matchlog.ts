@@ -7,7 +7,14 @@
 export interface LogSnapshot {
   /** game time, seconds */
   t: number;
+  /** win probability as shown (calibrated + smoothed) */
   winP: number | null;
+  /**
+   * raw server win probability (no calibration, no smoothing). The calibration table is
+   * built from this value, because it is applied to this value: building it from the shown
+   * (already calibrated) value would make it correct its own corrections.
+   */
+  winRaw?: number | null;
   /** team net worth lead, my view */
   lead: number;
   phase?: string;
@@ -38,6 +45,24 @@ export interface MatchLog {
 }
 
 export const won = (m: MatchLog) => (m.winningTeam == null ? null : m.winningTeam === m.team);
+
+/**
+ * Fills `winningTeam` for logs whose broadcast ended before the game-over row arrived,
+ * from the account's match history (`match_result` = winning team). Returns the logs that
+ * changed, so the caller can save them.
+ */
+export function backfillOutcomes(logs: MatchLog[], history: { match_id: number; match_result: number }[]): MatchLog[] {
+  const byId = new Map(history.map((h) => [h.match_id, h.match_result]));
+  const changed: MatchLog[] = [];
+  for (const l of logs) {
+    if (l.winningTeam != null) continue;
+    const r = byId.get(l.matchId);
+    if (r !== 0 && r !== 1) continue;
+    l.winningTeam = r;
+    changed.push(l);
+  }
+  return changed;
+}
 
 export interface Calibration {
   matches: number;
@@ -74,11 +99,15 @@ export function calibrate(logs: MatchLog[]): Calibration {
       const m = Math.floor(s.t / 60);
       if (m === lastMin) continue;
       lastMin = m;
-      const b = rel.find((r) => s.winP! >= r.from && s.winP! < r.to);
-      if (b) {
-        b.p.push(s.winP);
+      // reliability maps the raw model value (what calibrateProb is applied to); logs from
+      // before v0.3.26 only have the shown value
+      const raw = s.winRaw !== undefined ? s.winRaw : s.winP;
+      const b = raw == null ? undefined : rel.find((r) => raw >= r.from && raw < r.to);
+      if (b && raw != null) {
+        b.p.push(raw);
         b.y.push(y);
       }
+      // Brier scores what the player actually saw
       sq.push((s.winP - y) ** 2);
     }
   }

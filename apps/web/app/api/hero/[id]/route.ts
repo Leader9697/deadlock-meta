@@ -51,7 +51,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
           .filter((r) => r.pickRate >= 0.03)
           .sort((a, b) => b.delta - a.delta)
           .slice(0, 6)
-          .map((r) => ({ id: r.item.id, name: r.item.name, slot: r.item.item_slot_type, winrate: r.winrate, delta: r.delta, avgBuyTimeS: r.avgBuyTimeS })),
+          .map((r) => ({ id: r.item.id, name: r.item.name, slot: r.item.item_slot_type, cost: r.item.cost ?? null, winrate: r.winrate, delta: r.delta, avgBuyTimeS: r.avgBuyTimeS })),
       ]),
     ),
     counters: { advantages, threats },

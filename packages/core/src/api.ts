@@ -71,7 +71,32 @@ export interface ClientOptions {
   /** Default init merged into every request (e.g. Next.js cache settings). */
   init?: FetchInit;
   fetchImpl?: typeof fetch;
+  /**
+   * Last-good copy of responses (e.g. on disk), used when deadlock-api cannot be reached
+   * after all retries. Keys are the request URL without its time window, so a copy from an
+   * hour ago still matches. Live endpoints (active matches) never fall back.
+   */
+  fallback?: ResponseFallback;
 }
+
+export interface ResponseFallback {
+  load(key: string): Promise<unknown | undefined>;
+  save(key: string, data: unknown): Promise<void> | void;
+}
+
+/** URL without the rolling time window, so last-good copies survive the hourly rounding. */
+export function fallbackKey(url: string): string {
+  const [path, qs = ""] = url.split("?");
+  const params = new URLSearchParams(qs);
+  params.delete("min_unix_timestamp");
+  params.delete("max_unix_timestamp");
+  params.sort();
+  const rest = params.toString();
+  return rest ? `${path}?${rest}` : path;
+}
+
+/** Paths whose old answer would be wrong rather than just stale. */
+const NO_FALLBACK = ["/v1/matches/active"];
 
 export function buildQuery(q: Query = {}): string {
   const params = new URLSearchParams();
@@ -103,6 +128,30 @@ export function createClient(opts: ClientOptions = {}) {
 
   async function get<T>(path: string, query?: Query, init?: FetchInit): Promise<T> {
     const url = `${base}${path}${buildQuery(query)}`;
+    const fb = opts.fallback && !NO_FALLBACK.some((p) => path.startsWith(p)) ? opts.fallback : null;
+    if (!fb) return fetchJson<T>(url, init);
+    const key = fallbackKey(`${path}${buildQuery(query)}`);
+    try {
+      const data = await fetchJson<T>(url, init);
+      try {
+        await fb.save(key, data);
+      } catch {
+        // a read-only disk must not break a good answer
+      }
+      return data;
+    } catch (err) {
+      // a 4xx is a real answer (bad request, unknown id), not an outage
+      if (err instanceof DeadlockApiError && err.status >= 400 && err.status < 500 && err.status !== 429) throw err;
+      const old = await fb.load(key).catch(() => undefined);
+      if (old !== undefined) {
+        console.warn(`[deadlock-api] ${path} unreachable, using the last saved copy:`, err instanceof Error ? err.message : err);
+        return old as T;
+      }
+      throw err;
+    }
+  }
+
+  async function fetchJson<T>(url: string, init?: FetchInit): Promise<T> {
     const headers = new Headers(opts.init?.headers as HeadersInit | undefined);
     headers.set("accept", "application/json");
     if (opts.apiKey) headers.set("X-API-KEY", opts.apiKey);

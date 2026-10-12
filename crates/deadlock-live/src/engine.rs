@@ -14,7 +14,7 @@ use crate::logwatch::{backscan, LogEvent, LogTail, Matchers};
 use crate::process::ProcessWatch;
 use crate::state::{Diag, EngineEvent, LiveState};
 use crate::steam;
-use crate::stream::{Aggregator, Api};
+use crate::stream::{Aggregator, Api, StreamEnd};
 
 #[derive(Debug, Clone)]
 pub enum Command {
@@ -34,7 +34,13 @@ struct Live {
     last_emit: Instant,
     dirty: bool,
     connected: bool,
+    /// when the game-over row arrived: the streams are closed shortly after, even if the
+    /// server keeps them open (or a reconnect would replay the match)
+    over_at: Option<Instant>,
 }
+
+/// Time after the game-over row to collect the last rows before the live task is stopped.
+const GAME_OVER_GRACE: Duration = Duration::from_secs(20);
 
 pub async fn run(
     cfg: Config,
@@ -60,6 +66,7 @@ pub async fn run(
     let mut proc_tick = interval(Duration::from_millis(cfg.poll_process_ms));
     let mut log_tick = interval(Duration::from_millis(cfg.poll_log_ms));
     let mut fallback_tick = interval(Duration::from_secs(10));
+    let mut end_tick = interval(Duration::from_secs(5));
 
     let mut running = false;
     let mut last_seen: Option<Instant> = None;
@@ -207,6 +214,17 @@ pub async fn run(
                 }
             }
 
+            // game over: stop the streams after a short grace instead of waiting on the server
+            _ = end_tick.tick(), if live.as_ref().and_then(|l| l.over_at).is_some_and(|t| t.elapsed() >= GAME_OVER_GRACE) => {
+                if let Some(l) = live.take() {
+                    l.task.abort();
+                    if l.dirty && !l.agg.state.players.is_empty() {
+                        let _ = events.send(EngineEvent::LiveState(l.agg.state.clone())).await;
+                    }
+                    let _ = events.send(EngineEvent::LiveEnded { match_id: l.match_id }).await;
+                }
+            }
+
             row = async { live.as_mut().unwrap().rows.recv().await }, if live.is_some() => {
                 let l = live.as_mut().unwrap();
                 match row {
@@ -218,6 +236,9 @@ pub async fn run(
                         let was_over = l.agg.state.winning_team.is_some();
                         l.dirty |= l.agg.apply(&v);
                         let game_over = !was_over && l.agg.state.winning_team.is_some();
+                        if game_over {
+                            l.over_at = Some(Instant::now());
+                        }
                         if l.dirty && (game_over || l.last_emit.elapsed() >= emit_every) {
                             l.last_emit = Instant::now();
                             l.dirty = false;
@@ -268,29 +289,57 @@ pub async fn run(
     }
 }
 
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::time::{SystemTime, UNIX_EPOCH};
 
-static SPECTATE_CALLS: Mutex<Vec<Instant>> = Mutex::new(Vec::new());
+/// Spectate calls in the last hour (unix seconds). deadlock-api allows 6 per hour per IP,
+/// so the count is kept in a file too: restarting the app must not forget it.
+static SPECTATE_CALLS: Mutex<Vec<u64>> = Mutex::new(Vec::new());
+const SPECTATE_PER_HOUR: usize = 6;
 
-fn record_spectate_and_quota() -> (usize, Option<u64>) {
+fn unix_now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or_default()
+}
+
+fn quota_file(dir: Option<&Path>) -> Option<PathBuf> {
+    dir.map(|d| d.join("spectate-calls.txt"))
+}
+
+/// Records one spectate call; returns the calls in the last hour (this one included) and,
+/// once the quota is used up, the seconds until the oldest call drops out.
+fn record_spectate_and_quota(state_dir: Option<&Path>) -> (usize, Option<u64>) {
     let mut calls = match SPECTATE_CALLS.lock() {
         Ok(guard) => guard,
         Err(poisoned) => poisoned.into_inner(),
     };
-    let now = Instant::now();
-    let one_hour = Duration::from_secs(3600);
-    calls.retain(|&t| now.duration_since(t) < one_hour);
+    let now = unix_now();
+    let file = quota_file(state_dir);
+    if let Some(text) = file.as_ref().and_then(|f| std::fs::read_to_string(f).ok()) {
+        for t in text.lines().filter_map(|l| l.trim().parse::<u64>().ok()) {
+            if !calls.contains(&t) {
+                calls.push(t);
+            }
+        }
+    }
+    calls.retain(|&t| now.saturating_sub(t) < 3600 && t <= now + 60);
     calls.push(now);
+    calls.sort_unstable();
+    if let Some(f) = file {
+        let text: Vec<String> = calls.iter().map(u64::to_string).collect();
+        let _ = std::fs::write(f, text.join("\n"));
+    }
     let count = calls.len();
-    let reset_secs = if count >= 6 {
-        calls.first().map(|&oldest| {
-            one_hour
-                .saturating_sub(now.duration_since(oldest))
-                .as_secs()
+    let reset_secs = (count >= SPECTATE_PER_HOUR)
+        .then(|| {
+            calls
+                .first()
+                .map(|&oldest| 3600u64.saturating_sub(now.saturating_sub(oldest)))
         })
-    } else {
-        None
-    };
+        .flatten();
     (count, reset_secs)
 }
 
@@ -304,8 +353,9 @@ fn start_live(
     let (tx, rx) = mpsc::channel::<Result<Value, String>>(1024);
     let api = api.clone();
     let queries = cfg.live.queries.clone();
+    let state_dir = cfg.state_dir.clone();
     let task = tokio::spawn(async move {
-        let Some(url) = resolve_url(&api, match_id, &events).await else {
+        let Some(url) = resolve_url(&api, match_id, &events, state_dir.as_deref()).await else {
             let _ = tx
                 .send(Err(
                     "Broadcast tidak tersedia untuk match ini (setelah 90 menit mencoba).".into(),
@@ -341,6 +391,7 @@ fn start_live(
         last_emit: Instant::now() - Duration::from_secs(3600),
         dirty: false,
         connected: false,
+        over_at: None,
     }
 }
 
@@ -352,6 +403,7 @@ async fn resolve_url(
     api: &Api,
     match_id: u64,
     events: &mpsc::Sender<EngineEvent>,
+    state_dir: Option<&Path>,
 ) -> Option<String> {
     let started = Instant::now();
     let mut spectate_tries = 0u32;
@@ -363,14 +415,14 @@ async fn resolve_url(
         }
         if !quota_gone && spectate_tries < 3 && Instant::now() >= next_spectate {
             spectate_tries += 1;
-            let (count, reset_secs) = record_spectate_and_quota();
+            let (count, reset_secs) = record_spectate_and_quota(state_dir);
             match api.resolve_broadcast_url(match_id).await {
                 Ok(u) => return Some(u),
                 Err(e) => {
                     let status = e
                         .downcast_ref::<crate::stream::SpectateError>()
                         .map(|s| s.status);
-                    quota_gone = status == Some(429) || count >= 6;
+                    quota_gone = status == Some(429) || count >= SPECTATE_PER_HOUR;
                     next_spectate = Instant::now() + Duration::from_secs(180);
                     let reset_msg = if let Some(secs) = reset_secs {
                         format!(" (reset ±{} mnt lagi)", secs.div_ceil(60))
@@ -402,34 +454,104 @@ async fn resolve_url(
     None
 }
 
+/// Consecutive failed (re)connects after which a query stream gives up.
+const MAX_STREAM_FAILURES: u32 = 20;
+/// A closed stream with no rows this many times in a row means the broadcast is gone.
+const MAX_EMPTY_CLOSES: u32 = 3;
+/// Reconnects after a clean close, per query and match. A proxy that cuts the stream every
+/// few minutes stays well below this; it stops an endless replay if a finished broadcast
+/// keeps answering with its old rows.
+const MAX_CLOSED_RECONNECTS: u32 = 40;
+
 /// Keeps one query stream alive (reconnects are cheap with broadcast_url: 20/min).
+/// A connection that closes without the server's end event (proxy or server timeout) is
+/// reconnected; the failure budget resets whenever a connection delivered rows, so a long
+/// match on a flaky network does not run out of retries.
 async fn run_query(api: Api, url: String, q: NamedQuery, tx: mpsc::Sender<Result<Value, String>>) {
-    for _ in 0..20 {
+    let mut failures = 0u32;
+    let mut empty_closes = 0u32;
+    let mut closed = 0u32;
+    loop {
         let (rtx, mut rrx) = mpsc::channel::<Value>(512);
         let fwd = {
             let tx = tx.clone();
             tokio::spawn(async move {
+                let mut n = 0u64;
                 while let Some(v) = rrx.recv().await {
                     if tx.send(Ok(v)).await.is_err() {
                         break;
                     }
+                    n += 1;
                 }
+                n
             })
         };
         let res = api.stream_rows(&url, &q.sql, rtx).await;
-        let _ = fwd.await;
-        match res {
-            Ok(()) => return, // broadcast finished
+        let rows = fwd.await.unwrap_or(0);
+        if rows > 0 {
+            failures = 0;
+            empty_closes = 0;
+        }
+        let wait = match res {
+            Ok(StreamEnd::Ended) => return, // broadcast finished
+            Ok(StreamEnd::Closed) => {
+                closed += 1;
+                if closed > MAX_CLOSED_RECONNECTS {
+                    return;
+                }
+                if rows == 0 {
+                    empty_closes += 1;
+                    if empty_closes >= MAX_EMPTY_CLOSES {
+                        return; // nothing new after several reconnects: the broadcast is over
+                    }
+                }
+                Duration::from_secs(2)
+            }
             Err(e) => {
+                failures += 1;
                 if tx
                     .send(Err(format!("live stream '{}': {e}", q.name)))
                     .await
                     .is_err()
+                    || failures >= MAX_STREAM_FAILURES
                 {
                     return;
                 }
-                tokio::time::sleep(Duration::from_secs(5)).await;
+                // 5 s, 10 s, … up to 30 s between attempts
+                Duration::from_secs((5 * u64::from(failures)).min(30))
             }
-        }
+        };
+        tokio::time::sleep(wait).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn spectate_quota_survives_a_restart() {
+        let dir = std::env::temp_dir().join(format!("dlm-quota-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        // calls made by a previous run of the app: 5 in the last hour, 1 older
+        let now = unix_now();
+        let old: Vec<String> = [
+            now - 7200,
+            now - 3000,
+            now - 2000,
+            now - 1000,
+            now - 500,
+            now - 100,
+        ]
+        .iter()
+        .map(u64::to_string)
+        .collect();
+        std::fs::write(dir.join("spectate-calls.txt"), old.join("\n")).unwrap();
+        SPECTATE_CALLS.lock().unwrap().clear();
+        let (count, reset) = record_spectate_and_quota(Some(&dir));
+        assert_eq!(count, 6);
+        let reset = reset.expect("quota used up");
+        assert!((500..=700).contains(&reset), "{reset}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

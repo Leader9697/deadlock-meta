@@ -93,13 +93,16 @@ impl Api {
             .and_then(Value::as_u64))
     }
 
-    /// Streams rows until the broadcast ends or `stop` fires. Each parsed row is sent on `rows`.
+    /// Streams rows until the broadcast ends or the connection closes. Each parsed row is
+    /// sent on `rows`. `Ended` only when the server says the query is done (`end`/`done`
+    /// event) or the receiver is gone; a body that simply stops is `Closed` (proxy / server
+    /// timeout mid-match) and is worth reconnecting.
     pub async fn stream_rows(
         &self,
         broadcast_url: &str,
         sql: &str,
         rows: mpsc::Sender<Value>,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<StreamEnd> {
         let res = self
             .http
             .get(format!("{}/v1/matches/demo/live/query", self.base))
@@ -124,20 +127,29 @@ impl Api {
                     anyhow::bail!("live query error: {}", ev.data);
                 }
                 if matches!(ev.event.as_deref(), Some("end") | Some("done")) {
-                    return Ok(());
+                    return Ok(StreamEnd::Ended);
                 }
                 let Ok(v) = serde_json::from_str::<Value>(&ev.data) else {
                     continue;
                 };
                 for row in flatten_rows(v) {
                     if rows.send(row).await.is_err() {
-                        return Ok(()); // receiver dropped → stop
+                        return Ok(StreamEnd::Ended); // receiver dropped → stop
                     }
                 }
             }
         }
-        Ok(())
+        Ok(StreamEnd::Closed)
     }
+}
+
+/// How a live query stream finished.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StreamEnd {
+    /// the broadcast / query is over
+    Ended,
+    /// the connection closed without an end event: reconnect
+    Closed,
 }
 
 /// Non-2xx from the spectate endpoint (429 = our hourly quota is gone).
@@ -257,7 +269,13 @@ pub struct Aggregator {
     bought_at: HashMap<(i64, u32), f64>,
     /// team → unlocked flex slot ids
     flex_unlocked: HashMap<usize, std::collections::BTreeSet<i64>>,
+    /// game mode came from the game rules row (the player-count guess never overrides it)
+    mode_from_rules: bool,
 }
+
+/// Game time after which a short player list counts as Street Brawl (players arrive one by
+/// one at the start of a broadcast, so 2–8 players early on is just an incomplete list).
+const BRAWL_COUNT_AFTER_S: f64 = 120.0;
 
 /// Deaths of the same victim within this many ticks are one death (killfeed + recap).
 const DEATH_MERGE_TICKS: i64 = 180;
@@ -339,6 +357,22 @@ impl Aggregator {
     /// Match clock. Preferred: last clock value + ticks since it was taken (valid once
     /// the game has been paused at least once). Otherwise: server time − game start
     /// − paused time, where server time = tick / tickrate.
+    /// Without the rules row: 9+ players is a normal match; 2–8 only means Street Brawl
+    /// once the game has run a while. Re-evaluated on every player update, never locked.
+    fn guess_mode_from_players(&mut self) {
+        if self.mode_from_rules {
+            return;
+        }
+        let n = self.state.players.len();
+        self.state.game_mode = if n >= 9 {
+            Some("normal".into())
+        } else if n >= 2 && self.state.game_time_s >= BRAWL_COUNT_AFTER_S {
+            Some("brawl".into())
+        } else {
+            None
+        };
+    }
+
     fn update_clock(&mut self) -> bool {
         let anchored = self
             .clock_anchor
@@ -411,6 +445,7 @@ impl Aggregator {
             if let Some(gm) = num(row.get("game_mode")).map(|v| v as u8) {
                 let mode = if gm == 4 { "brawl" } else { "normal" };
                 self.state.game_mode = Some(mode.to_string());
+                self.mode_from_rules = true;
             }
             if let Some(mm) = num(row.get("match_mode")).map(|v| v as u8) {
                 let mode = if mm == 4 { "ranked" } else { "unranked" };
@@ -575,16 +610,7 @@ impl Aggregator {
             let times = self.times_for(slot, &ids);
             self.state.player_mut(account).item_times = times;
         }
-        if self.state.game_mode.is_none() && self.state.players.len() >= 2 {
-            self.state.game_mode = Some(
-                if self.state.players.len() <= 8 {
-                    "brawl"
-                } else {
-                    "normal"
-                }
-                .into(),
-            );
-        }
+        self.guess_mode_from_players();
         true
     }
 }
@@ -769,6 +795,37 @@ impl Aggregator {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn short_player_list_early_is_not_brawl() {
+        let mut a = Aggregator::new(LiveState::default());
+        a.state.players = (0..4)
+            .map(|i| crate::state::LivePlayer {
+                account_id: i,
+                ..Default::default()
+            })
+            .collect();
+        a.state.game_time_s = 10.0;
+        a.guess_mode_from_players();
+        assert_eq!(a.state.game_mode, None);
+        a.state.players = (0..12)
+            .map(|i| crate::state::LivePlayer {
+                account_id: i,
+                ..Default::default()
+            })
+            .collect();
+        a.guess_mode_from_players();
+        assert_eq!(a.state.game_mode.as_deref(), Some("normal"));
+        a.state.players.truncate(8);
+        a.state.game_time_s = 300.0;
+        a.guess_mode_from_players();
+        assert_eq!(a.state.game_mode.as_deref(), Some("brawl"));
+        // the rules row wins over the guess
+        a.mode_from_rules = true;
+        a.state.game_mode = Some("normal".into());
+        a.guess_mode_from_players();
+        assert_eq!(a.state.game_mode.as_deref(), Some("normal"));
+    }
 
     #[test]
     fn counts_flex_slot_unlocks_per_team() {
