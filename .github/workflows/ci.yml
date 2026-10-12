@@ -20,10 +20,10 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: TypeScript Typecheck (Core, Desktop, Web)
+      - name: "TypeScript Typecheck"
         run: npm run typecheck
 
-      - name: Vitest Unit Tests
+      - name: "Vitest Unit Tests"
         run: npm test
 
   rust:
@@ -39,14 +39,14 @@ jobs:
         with:
           workspaces: ". -> target"
 
-      - name: Cargo Fmt Check
+      - name: "Cargo Fmt Check"
         run: cargo fmt --check
 
-      - name: Cargo Clippy (Workspace)
+      - name: "Cargo Clippy"
         run: cargo clippy --workspace
 
-      - name: Cargo Check
+      - name: "Cargo Check"
         run: cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml
 
-      - name: Cargo Test (Workspace: deadlock-live + desktop)
+      - name: "Cargo Test Workspace"
         run: cargo test --workspace
