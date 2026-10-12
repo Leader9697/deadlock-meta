@@ -54,7 +54,11 @@ fn get_steam_profile() -> Option<deadlock_live::steam::SteamProfile> {
 
 /// Why the local site is (not) up: start note, or the exit code + log tail if it died.
 #[tauri::command]
-fn web_status(app: tauri::AppHandle, server: State<'_, WebServer>, note: State<'_, WebNote>) -> String {
+fn web_status(
+    app: tauri::AppHandle,
+    server: State<'_, WebServer>,
+    note: State<'_, WebNote>,
+) -> String {
     let mut guard = server.0.lock().unwrap();
     if let Some(child) = guard.as_mut() {
         if let Ok(Some(status)) = child.try_wait() {
@@ -86,23 +90,41 @@ fn remember(recent: &Mutex<Vec<EngineEvent>>, ev: &EngineEvent) {
 
 #[tauri::command]
 async fn set_match(state: State<'_, AppState>, match_id: u64) -> Result<(), String> {
-    state.cmd.send(Command::SetMatch(match_id)).await.map_err(|e| e.to_string())
+    state
+        .cmd
+        .send(Command::SetMatch(match_id))
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 async fn force_game(state: State<'_, AppState>, on: bool) -> Result<(), String> {
-    state.cmd.send(Command::ForceGame(on)).await.map_err(|e| e.to_string())
+    state
+        .cmd
+        .send(Command::ForceGame(on))
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 async fn stop_live(state: State<'_, AppState>) -> Result<(), String> {
-    state.cmd.send(Command::StopLive).await.map_err(|e| e.to_string())
+    state
+        .cmd
+        .send(Command::StopLive)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn set_click_through(window: WebviewWindow, state: State<'_, AppState>, on: bool) -> Result<(), String> {
+fn set_click_through(
+    window: WebviewWindow,
+    state: State<'_, AppState>,
+    on: bool,
+) -> Result<(), String> {
     *state.click_through.lock().unwrap() = on;
-    window.set_ignore_cursor_events(on).map_err(|e| e.to_string())?;
+    window
+        .set_ignore_cursor_events(on)
+        .map_err(|e| e.to_string())?;
     window.emit("click-through", on).map_err(|e| e.to_string())
 }
 
@@ -117,7 +139,12 @@ fn get_layout(state: State<'_, AppState>) -> widgets::Layout {
 }
 
 #[tauri::command]
-fn toggle_widget(app: AppHandle, state: State<'_, AppState>, name: String, enabled: bool) -> widgets::Layout {
+fn toggle_widget(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    name: String,
+    enabled: bool,
+) -> widgets::Layout {
     let mut l = state.layout.lock().unwrap();
     if let Some(w) = l.widgets.get_mut(&name) {
         w.enabled = enabled;
@@ -221,11 +248,38 @@ fn show_panel(app: &AppHandle) {
 /// Closing the panel (✕, Alt+F4) only hides it to the tray; "Keluar" really quits
 /// (and stops the bundled site, see the Exit event below).
 fn build_tray(app: &tauri::App) -> tauri::Result<()> {
-    let show = MenuItem::with_id(app, "show", "Tampilkan panel (Ctrl+Shift+D)", true, None::<&str>)?;
-    let click = MenuItem::with_id(app, "click", "Mode klik-tembus (Ctrl+Shift+F)", true, None::<&str>)?;
-    let edit = MenuItem::with_id(app, "edit", "Atur posisi HUD (Ctrl+Shift+E)", true, None::<&str>)?;
+    let show = MenuItem::with_id(
+        app,
+        "show",
+        "Tampilkan panel (Ctrl+Shift+D)",
+        true,
+        None::<&str>,
+    )?;
+    let click = MenuItem::with_id(
+        app,
+        "click",
+        "Mode klik-tembus (Ctrl+Shift+F)",
+        true,
+        None::<&str>,
+    )?;
+    let edit = MenuItem::with_id(
+        app,
+        "edit",
+        "Atur posisi HUD (Ctrl+Shift+E)",
+        true,
+        None::<&str>,
+    )?;
     let quit = MenuItem::with_id(app, "quit", "Keluar", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show, &click, &edit, &PredefinedMenuItem::separator(app)?, &quit])?;
+    let menu = Menu::with_items(
+        app,
+        &[
+            &show,
+            &click,
+            &edit,
+            &PredefinedMenuItem::separator(app)?,
+            &quit,
+        ],
+    )?;
     let mut tray = TrayIconBuilder::with_id("main")
         .tooltip(format!("Deadlock Meta v{}", app.package_info().version))
         .menu(&menu)
@@ -240,7 +294,12 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
             _ => {}
         })
         .on_tray_icon_event(|tray, ev| {
-            if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = ev {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = ev
+            {
                 toggle_visible(tray.app_handle());
             }
         });
@@ -270,7 +329,11 @@ fn toggle_click_through(app: &AppHandle) {
 /// Ctrl+Shift+D: show/hide main panel. Ctrl+Shift+F: click-through. Ctrl+Shift+E: edit HUD widgets.
 fn shortcuts() -> (Shortcut, Shortcut, Shortcut) {
     let m = Some(Modifiers::CONTROL | Modifiers::SHIFT);
-    (Shortcut::new(m, Code::KeyD), Shortcut::new(m, Code::KeyF), Shortcut::new(m, Code::KeyE))
+    (
+        Shortcut::new(m, Code::KeyD),
+        Shortcut::new(m, Code::KeyF),
+        Shortcut::new(m, Code::KeyE),
+    )
 }
 
 /// In-game hotkeys handled by the main window's script (HUD widgets are click-through):
@@ -278,12 +341,15 @@ fn shortcuts() -> (Shortcut, Shortcut, Shortcut) {
 /// Ctrl+Shift+T = team view for 10 s in the HUD Lawan box.
 fn game_shortcuts() -> (Shortcut, Shortcut, Shortcut) {
     let m = Some(Modifiers::CONTROL | Modifiers::SHIFT);
-    (Shortcut::new(m, Code::KeyB), Shortcut::new(m, Code::KeyH), Shortcut::new(m, Code::KeyT))
+    (
+        Shortcut::new(m, Code::KeyB),
+        Shortcut::new(m, Code::KeyH),
+        Shortcut::new(m, Code::KeyT),
+    )
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-
     tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_updater::Builder::new().build())

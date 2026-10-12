@@ -9,7 +9,10 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, Manager, Monitor, PhysicalPosition, PhysicalSize, Position, Size, WebviewUrl, WebviewWindowBuilder};
+use tauri::{
+    AppHandle, Emitter, Manager, Monitor, PhysicalPosition, PhysicalSize, Position, Size,
+    WebviewUrl, WebviewWindowBuilder,
+};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
@@ -47,22 +50,39 @@ impl Default for Layout {
     /// Defaults around Deadlock's HUD: coach under the top hero bar, win/econ and enemy
     /// list on the left edge, next-buy on the right edge. Adjust once in edit mode.
     fn default() -> Self {
-        let w = |fx, fy, anchor, w, h| WidgetPos { fx, fy, anchor, w, h, enabled: true };
+        let w = |fx, fy, anchor, w, h| WidgetPos {
+            fx,
+            fy,
+            anchor,
+            w,
+            h,
+            enabled: true,
+        };
         let mut widgets = BTreeMap::new();
         widgets.insert("coach".into(), w(0.5, 0.105, Anchor::Tc, 440.0, 92.0));
         widgets.insert("win".into(), w(0.012, 0.25, Anchor::Tl, 300.0, 175.0));
         widgets.insert("enemies".into(), w(0.012, 0.52, Anchor::Tl, 290.0, 370.0));
         widgets.insert("buy".into(), w(0.988, 0.30, Anchor::Tr, 300.0, 330.0));
-        Self { monitor: None, scale: 1.0, widgets }
+        Self {
+            monitor: None,
+            scale: 1.0,
+            widgets,
+        }
     }
 }
 
 pub fn layout_path(app: &AppHandle) -> Option<PathBuf> {
-    app.path().app_config_dir().ok().map(|d| d.join("hud-layout.json"))
+    app.path()
+        .app_config_dir()
+        .ok()
+        .map(|d| d.join("hud-layout.json"))
 }
 
 pub fn load(path: &Path) -> Layout {
-    let mut l: Layout = std::fs::read_to_string(path).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+    let mut l: Layout = std::fs::read_to_string(path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
     // new widgets added in later versions get their defaults
     for (k, v) in Layout::default().widgets {
         l.widgets.entry(k).or_insert(v);
@@ -99,7 +119,11 @@ pub fn label(name: &str) -> String {
 
 fn monitor(app: &AppHandle, l: &Layout) -> Option<Monitor> {
     if let Some(i) = l.monitor {
-        if let Some(m) = app.available_monitors().ok().and_then(|ms| ms.into_iter().nth(i)) {
+        if let Some(m) = app
+            .available_monitors()
+            .ok()
+            .and_then(|ms| ms.into_iter().nth(i))
+        {
             return Some(m);
         }
     }
@@ -107,7 +131,13 @@ fn monitor(app: &AppHandle, l: &Layout) -> Option<Monitor> {
 }
 
 /// Physical (x, y, w, h) of a widget on a monitor.
-pub fn place(mon_pos: (i32, i32), mon_size: (u32, u32), sf: f64, scale: f64, p: &WidgetPos) -> (i32, i32, u32, u32) {
+pub fn place(
+    mon_pos: (i32, i32),
+    mon_size: (u32, u32),
+    sf: f64,
+    scale: f64,
+    p: &WidgetPos,
+) -> (i32, i32, u32, u32) {
     let w = (p.w * sf * scale).round() as u32;
     let h = (p.h * sf * scale).round() as u32;
     let ax = mon_pos.0 as f64 + p.fx * mon_size.0 as f64;
@@ -121,7 +151,14 @@ pub fn place(mon_pos: (i32, i32), mon_size: (u32, u32), sf: f64, scale: f64, p: 
 }
 
 /// Inverse of `place`: fractions from a window's physical top-left corner.
-pub fn unplace(mon_pos: (i32, i32), mon_size: (u32, u32), x: i32, y: i32, w: u32, anchor: Anchor) -> (f64, f64) {
+pub fn unplace(
+    mon_pos: (i32, i32),
+    mon_size: (u32, u32),
+    x: i32,
+    y: i32,
+    w: u32,
+    anchor: Anchor,
+) -> (f64, f64) {
     let ax = x as f64
         + match anchor {
             Anchor::Tl => 0.0,
@@ -139,18 +176,22 @@ pub fn create(app: &AppHandle, l: &Layout) -> tauri::Result<()> {
         if !p.enabled || app.get_webview_window(&label(name)).is_some() {
             continue;
         }
-        let w = WebviewWindowBuilder::new(app, label(name), WebviewUrl::App(format!("index.html?widget={name}").into()))
-            .title(format!("Deadlock Meta · {name}"))
-            .transparent(true)
-            .decorations(false)
-            .always_on_top(true)
-            .skip_taskbar(true)
-            .shadow(false)
-            .resizable(false)
-            .focused(false)
-            .visible(false)
-            .inner_size(p.w * l.scale, p.h * l.scale)
-            .build()?;
+        let w = WebviewWindowBuilder::new(
+            app,
+            label(name),
+            WebviewUrl::App(format!("index.html?widget={name}").into()),
+        )
+        .title(format!("Deadlock Meta · {name}"))
+        .transparent(true)
+        .decorations(false)
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .shadow(false)
+        .resizable(false)
+        .focused(false)
+        .visible(false)
+        .inner_size(p.w * l.scale, p.h * l.scale)
+        .build()?;
         // Position/click-through are set when the widget is first shown: calling window
         // setters on a never-shown window crashes tao's GTK backend (Linux).
         let _ = w;
@@ -161,7 +202,11 @@ pub fn create(app: &AppHandle, l: &Layout) -> tauri::Result<()> {
 /// Moves/resizes every widget to its layout position on the game monitor.
 pub fn apply(app: &AppHandle, l: &Layout) {
     let Some(m) = monitor(app, l) else { return };
-    let (mp, ms, sf) = ((m.position().x, m.position().y), (m.size().width, m.size().height), m.scale_factor());
+    let (mp, ms, sf) = (
+        (m.position().x, m.position().y),
+        (m.size().width, m.size().height),
+        m.scale_factor(),
+    );
     for (name, p) in &l.widgets {
         if let Some(win) = app.get_webview_window(&label(name)) {
             if !win.is_visible().unwrap_or(false) {
@@ -194,13 +239,23 @@ pub fn set_visible(app: &AppHandle, l: &Layout, on: bool) {
 pub fn set_edit(app: &AppHandle, l: &mut Layout, path: Option<&Path>, on: bool) {
     let mon = monitor(app, l);
     for (name, p) in l.widgets.iter_mut() {
-        let Some(w) = app.get_webview_window(&label(name)) else { continue };
+        let Some(w) = app.get_webview_window(&label(name)) else {
+            continue;
+        };
         if on {
             let _ = w.show();
             let _ = w.set_ignore_cursor_events(false);
         } else {
-            if let (Some(m), Ok(pos), Ok(size)) = (mon.as_ref(), w.outer_position(), w.outer_size()) {
-                let (fx, fy) = unplace((m.position().x, m.position().y), (m.size().width, m.size().height), pos.x, pos.y, size.width, p.anchor);
+            if let (Some(m), Ok(pos), Ok(size)) = (mon.as_ref(), w.outer_position(), w.outer_size())
+            {
+                let (fx, fy) = unplace(
+                    (m.position().x, m.position().y),
+                    (m.size().width, m.size().height),
+                    pos.x,
+                    pos.y,
+                    size.width,
+                    p.anchor,
+                );
                 p.fx = fx;
                 p.fy = fy;
             }
@@ -223,21 +278,38 @@ mod tests {
     fn place_and_unplace_roundtrip_for_all_anchors() {
         let mon = ((1920, 0), (2560u32, 1440u32));
         for anchor in [Anchor::Tl, Anchor::Tc, Anchor::Tr] {
-            let p = WidgetPos { fx: 0.3, fy: 0.2, anchor, w: 300.0, h: 200.0, enabled: true };
+            let p = WidgetPos {
+                fx: 0.3,
+                fy: 0.2,
+                anchor,
+                w: 300.0,
+                h: 200.0,
+                enabled: true,
+            };
             let (x, y, w, _) = place(mon.0, mon.1, 1.25, 1.0, &p);
             let (fx, fy) = unplace(mon.0, mon.1, x, y, w, anchor);
-            assert!((fx - 0.3).abs() < 1e-3 && (fy - 0.2).abs() < 1e-3, "{anchor:?}: {fx} {fy}");
+            assert!(
+                (fx - 0.3).abs() < 1e-3 && (fy - 0.2).abs() < 1e-3,
+                "{anchor:?}: {fx} {fy}"
+            );
         }
     }
 
     #[test]
     fn defaults_do_not_overlap() {
         let l = Layout::default();
-        let r: Vec<_> = l.widgets.values().map(|p| place((0, 0), (1920, 1080), 1.0, 1.0, p)).collect();
+        let r: Vec<_> = l
+            .widgets
+            .values()
+            .map(|p| place((0, 0), (1920, 1080), 1.0, 1.0, p))
+            .collect();
         for i in 0..r.len() {
             for j in i + 1..r.len() {
                 let (a, b) = (r[i], r[j]);
-                let overlap = a.0 < b.0 + b.2 as i32 && b.0 < a.0 + a.2 as i32 && a.1 < b.1 + b.3 as i32 && b.1 < a.1 + a.3 as i32;
+                let overlap = a.0 < b.0 + b.2 as i32
+                    && b.0 < a.0 + a.2 as i32
+                    && a.1 < b.1 + b.3 as i32
+                    && b.1 < a.1 + a.3 as i32;
                 assert!(!overlap, "{a:?} overlaps {b:?}");
             }
         }
@@ -248,7 +320,10 @@ mod tests {
         let l = Layout::default();
         for (name, p) in &l.widgets {
             let (x, y, w, h) = place((0, 0), (1920, 1080), 1.0, l.scale, p);
-            assert!(x >= 0 && y >= 0 && x as u32 + w <= 1920 && y as u32 + h <= 1080, "{name} off-screen: {x},{y} {w}x{h}");
+            assert!(
+                x >= 0 && y >= 0 && x as u32 + w <= 1920 && y as u32 + h <= 1080,
+                "{name} off-screen: {x},{y} {w}x{h}"
+            );
         }
     }
 

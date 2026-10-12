@@ -9,11 +9,11 @@ use tokio::task::JoinHandle;
 use tokio::time::interval;
 
 use crate::config::Config;
+use crate::config::NamedQuery;
 use crate::logwatch::{backscan, LogEvent, LogTail, Matchers};
 use crate::process::ProcessWatch;
 use crate::state::{Diag, EngineEvent, LiveState};
 use crate::steam;
-use crate::config::NamedQuery;
 use crate::stream::{Aggregator, Api};
 
 #[derive(Debug, Clone)]
@@ -36,14 +36,22 @@ struct Live {
     connected: bool,
 }
 
-pub async fn run(cfg: Config, events: mpsc::Sender<EngineEvent>, mut cmds: mpsc::Receiver<Command>) {
+pub async fn run(
+    cfg: Config,
+    events: mpsc::Sender<EngineEvent>,
+    mut cmds: mpsc::Receiver<Command>,
+) {
     let api = Api::new(&cfg.api_base, cfg.api_key.clone());
     let mut my_account = cfg.account_id.or_else(steam::local_account_id).unwrap_or(0);
     let log_path = cfg.console_log.clone().or_else(steam::console_log_path);
     let matchers = match Matchers::new(&cfg.log) {
         Ok(m) => Some(m),
         Err(e) => {
-            let _ = events.send(EngineEvent::Error { message: format!("invalid log pattern: {e}") }).await;
+            let _ = events
+                .send(EngineEvent::Error {
+                    message: format!("invalid log pattern: {e}"),
+                })
+                .await;
             None
         }
     };
@@ -65,7 +73,9 @@ pub async fn run(cfg: Config, events: mpsc::Sender<EngineEvent>, mut cmds: mpsc:
 
     if my_account == 0 {
         let _ = events
-            .send(EngineEvent::Error { message: "Steam account not found; set account_id in deadlock-live.toml".into() })
+            .send(EngineEvent::Error {
+                message: "Steam account not found; set account_id in deadlock-live.toml".into(),
+            })
             .await;
     }
 
@@ -104,7 +114,7 @@ pub async fn run(cfg: Config, events: mpsc::Sender<EngineEvent>, mut cmds: mpsc:
                 }
                 if now && !running {
                     running = true;
-                    let by = if procs.found_by.is_some() { procs.found_by.unwrap() } else if force { "mode manual" } else { "console.log" };
+                    let by = if let Some(p) = procs.found_by { p } else if force { "mode manual" } else { "console.log" };
                     let _ = events.send(EngineEvent::Status { message: format!("Deadlock terdeteksi (lewat {by})") }).await;
                     lobby.clear();
                     tail = log_path.clone().map(|p| LogTail::new(p, true));
@@ -273,26 +283,47 @@ fn record_spectate_and_quota() -> (usize, Option<u64>) {
     calls.push(now);
     let count = calls.len();
     let reset_secs = if count >= 6 {
-        calls.first().map(|&oldest| one_hour.saturating_sub(now.duration_since(oldest)).as_secs())
+        calls.first().map(|&oldest| {
+            one_hour
+                .saturating_sub(now.duration_since(oldest))
+                .as_secs()
+        })
     } else {
         None
     };
     (count, reset_secs)
 }
 
-fn start_live(api: &Api, cfg: &Config, match_id: u64, my_account: u32, events: mpsc::Sender<EngineEvent>) -> Live {
+fn start_live(
+    api: &Api,
+    cfg: &Config,
+    match_id: u64,
+    my_account: u32,
+    events: mpsc::Sender<EngineEvent>,
+) -> Live {
     let (tx, rx) = mpsc::channel::<Result<Value, String>>(1024);
     let api = api.clone();
     let queries = cfg.live.queries.clone();
     let task = tokio::spawn(async move {
         let Some(url) = resolve_url(&api, match_id, &events).await else {
-            let _ = tx.send(Err("Broadcast tidak tersedia untuk match ini (setelah 90 menit mencoba).".into())).await;
+            let _ = tx
+                .send(Err(
+                    "Broadcast tidak tersedia untuk match ini (setelah 90 menit mencoba).".into(),
+                ))
+                .await;
             return;
         };
-        let _ = events.send(EngineEvent::Status { message: "Broadcast ditemukan, menunggu data…".into() }).await;
+        let _ = events
+            .send(EngineEvent::Status {
+                message: "Broadcast ditemukan, menunggu data…".into(),
+            })
+            .await;
 
         // One SSE stream per query (players / clock / purchases / game over).
-        let streams: Vec<_> = queries.into_iter().map(|q| tokio::spawn(run_query(api.clone(), url.clone(), q, tx.clone()))).collect();
+        let streams: Vec<_> = queries
+            .into_iter()
+            .map(|q| tokio::spawn(run_query(api.clone(), url.clone(), q, tx.clone())))
+            .collect();
         for s in streams {
             let _ = s.await;
         }
@@ -302,7 +333,11 @@ fn start_live(api: &Api, cfg: &Config, match_id: u64, my_account: u32, events: m
         match_id,
         task,
         rows: rx,
-        agg: Aggregator::new(LiveState { match_id: Some(match_id), my_account_id: my_account, ..Default::default() }),
+        agg: Aggregator::new(LiveState {
+            match_id: Some(match_id),
+            my_account_id: my_account,
+            ..Default::default()
+        }),
         last_emit: Instant::now() - Duration::from_secs(3600),
         dirty: false,
         connected: false,
@@ -313,7 +348,11 @@ fn start_live(api: &Api, cfg: &Config, match_id: u64, my_account: u32, events: m
 /// 1. poll the public live-URL list every 20 s (cheap),
 /// 2. ask deadlock-api to spectate at most 3 times, spaced ≥3 min (6/hour per IP),
 ///    running as long as the match is alive (up to 90 minutes).
-async fn resolve_url(api: &Api, match_id: u64, events: &mpsc::Sender<EngineEvent>) -> Option<String> {
+async fn resolve_url(
+    api: &Api,
+    match_id: u64,
+    events: &mpsc::Sender<EngineEvent>,
+) -> Option<String> {
     let started = Instant::now();
     let mut spectate_tries = 0u32;
     let mut next_spectate = Instant::now(); // first spectate right away
@@ -328,11 +367,13 @@ async fn resolve_url(api: &Api, match_id: u64, events: &mpsc::Sender<EngineEvent
             match api.resolve_broadcast_url(match_id).await {
                 Ok(u) => return Some(u),
                 Err(e) => {
-                    let status = e.downcast_ref::<crate::stream::SpectateError>().map(|s| s.status);
+                    let status = e
+                        .downcast_ref::<crate::stream::SpectateError>()
+                        .map(|s| s.status);
                     quota_gone = status == Some(429) || count >= 6;
                     next_spectate = Instant::now() + Duration::from_secs(180);
                     let reset_msg = if let Some(secs) = reset_secs {
-                        format!(" (reset ±{} mnt lagi)", (secs + 59) / 60)
+                        format!(" (reset ±{} mnt lagi)", secs.div_ceil(60))
                     } else {
                         String::new()
                     };
@@ -351,7 +392,11 @@ async fn resolve_url(api: &Api, match_id: u64, events: &mpsc::Sender<EngineEvent
                 }
             }
         }
-        let delay = if started.elapsed() < Duration::from_secs(90) { Duration::from_secs(4) } else { Duration::from_secs(15) };
+        let delay = if started.elapsed() < Duration::from_secs(90) {
+            Duration::from_secs(4)
+        } else {
+            Duration::from_secs(15)
+        };
         tokio::time::sleep(delay).await;
     }
     None
@@ -376,7 +421,11 @@ async fn run_query(api: Api, url: String, q: NamedQuery, tx: mpsc::Sender<Result
         match res {
             Ok(()) => return, // broadcast finished
             Err(e) => {
-                if tx.send(Err(format!("live stream '{}': {e}", q.name))).await.is_err() {
+                if tx
+                    .send(Err(format!("live stream '{}': {e}", q.name)))
+                    .await
+                    .is_err()
+                {
                     return;
                 }
                 tokio::time::sleep(Duration::from_secs(5)).await;

@@ -16,9 +16,15 @@ pub enum LogEvent {
     SelfAccount(u32),
     Player(u32),
     MatchEnd,
-    HeroLoaded { entity: u32, hero: String },
+    HeroLoaded {
+        entity: u32,
+        hero: String,
+    },
     HeroRespawn(String),
-    GameState { state: u32, name: String },
+    GameState {
+        state: u32,
+        name: String,
+    },
 }
 
 pub struct Matchers {
@@ -33,7 +39,11 @@ pub struct Matchers {
 
 impl Matchers {
     pub fn new(p: &LogPatterns) -> anyhow::Result<Self> {
-        let compile = |xs: &[String]| xs.iter().map(|x| Regex::new(x)).collect::<Result<Vec<_>, _>>();
+        let compile = |xs: &[String]| {
+            xs.iter()
+                .map(|x| Regex::new(x))
+                .collect::<Result<Vec<_>, _>>()
+        };
         Ok(Self {
             match_id: compile(&p.match_id)?,
             self_steam: compile(&p.self_steam)?,
@@ -63,7 +73,11 @@ impl Matchers {
             if let Some(c) = re.captures(line) {
                 if let Some(id_str) = c.name("id").map(|m| m.as_str()) {
                     if let Ok(raw) = id_str.parse::<u64>() {
-                        let acc = if raw > u32::MAX as u64 { steam64_to_account(raw) } else { Some(raw as u32) };
+                        let acc = if raw > u32::MAX as u64 {
+                            steam64_to_account(raw)
+                        } else {
+                            Some(raw as u32)
+                        };
                         if let Some(a) = acc.filter(|a| *a > 0) {
                             out.push(LogEvent::SelfAccount(a));
                         }
@@ -74,7 +88,11 @@ impl Matchers {
         for re in &self.player {
             for c in re.captures_iter(line) {
                 if let Some(raw) = c.name("id").and_then(|m| m.as_str().parse::<u64>().ok()) {
-                    let acc = if raw > u32::MAX as u64 { steam64_to_account(raw) } else { Some(raw as u32) };
+                    let acc = if raw > u32::MAX as u64 {
+                        steam64_to_account(raw)
+                    } else {
+                        Some(raw as u32)
+                    };
                     if let Some(a) = acc.filter(|a| *a > 0) {
                         out.push(LogEvent::Player(a));
                     }
@@ -86,7 +104,10 @@ impl Matchers {
         }
         for re in &self.hero_loaded {
             if let Some(c) = re.captures(line) {
-                let entity = c.name("entity").and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
+                let entity = c
+                    .name("entity")
+                    .and_then(|m| m.as_str().parse().ok())
+                    .unwrap_or(0);
                 if let Some(hero) = c.name("hero").map(|m| m.as_str().to_string()) {
                     out.push(LogEvent::HeroLoaded { entity, hero });
                 }
@@ -101,9 +122,18 @@ impl Matchers {
         }
         for re in &self.game_state {
             if let Some(c) = re.captures(line) {
-                let state = c.name("state").and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
-                let name = c.name("name").map(|m| m.as_str().to_string()).unwrap_or_default();
-                if state == 6 || name.eq_ignore_ascii_case("POST_GAME") || name.eq_ignore_ascii_case("GAME_STATE_POST_GAME") {
+                let state = c
+                    .name("state")
+                    .and_then(|m| m.as_str().parse().ok())
+                    .unwrap_or(0);
+                let name = c
+                    .name("name")
+                    .map(|m| m.as_str().to_string())
+                    .unwrap_or_default();
+                if state == 6
+                    || name.eq_ignore_ascii_case("POST_GAME")
+                    || name.eq_ignore_ascii_case("GAME_STATE_POST_GAME")
+                {
                     out.push(LogEvent::MatchEnd);
                 }
                 out.push(LogEvent::GameState { state, name });
@@ -165,8 +195,16 @@ pub struct LogTail {
 
 impl LogTail {
     pub fn new(path: PathBuf, from_end: bool) -> Self {
-        let offset = if from_end { std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0) } else { 0 };
-        Self { path, offset, partial: String::new() }
+        let offset = if from_end {
+            std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0)
+        } else {
+            0
+        };
+        Self {
+            path,
+            offset,
+            partial: String::new(),
+        }
     }
 
     pub fn path(&self) -> &PathBuf {
@@ -194,7 +232,11 @@ impl LogTail {
         self.offset += buf.len() as u64;
 
         self.partial.push_str(&String::from_utf8_lossy(&buf));
-        let mut lines: Vec<String> = self.partial.split('\n').map(|l| l.trim_end_matches('\r').to_string()).collect();
+        let mut lines: Vec<String> = self
+            .partial
+            .split('\n')
+            .map(|l| l.trim_end_matches('\r').to_string())
+            .collect();
         self.partial = lines.pop().unwrap_or_default(); // last piece may be incomplete
         Ok(lines.into_iter().filter(|l| !l.is_empty()).collect())
     }
@@ -223,14 +265,24 @@ mod tests {
             m.scan_line(l, &mut ev);
         }
         // 76561198802383751 - 76561197960265728 = 842118023
-        assert_eq!(ev, vec![LogEvent::SelfAccount(842_118_023), LogEvent::MatchId(112_973_749), LogEvent::MatchId(112_973_749)]);
+        assert_eq!(
+            ev,
+            vec![
+                LogEvent::SelfAccount(842_118_023),
+                LogEvent::MatchId(112_973_749),
+                LogEvent::MatchId(112_973_749)
+            ]
+        );
     }
 
     #[test]
     fn backscan_finds_recent_match_only() {
         let m = Matchers::new(&LogPatterns::default()).unwrap();
         let fresh = format!("{REAL}\n10/09 00:40:00 [Client] something later");
-        assert_eq!(backscan(&fresh, &m, 90), (Some(112_973_749), Some(842_118_023)));
+        assert_eq!(
+            backscan(&fresh, &m, 90),
+            (Some(112_973_749), Some(842_118_023))
+        );
         let stale = format!("{REAL}\n10/09 03:00:00 [Client] hours later");
         assert_eq!(backscan(&stale, &m, 90).0, None);
     }

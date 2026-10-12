@@ -4,6 +4,7 @@ import {
   parseStats,
   winProbability,
   empiricalFor,
+  calibrateProb,
   type WinModel,
 } from "../src/winprob";
 
@@ -138,5 +139,28 @@ describe("empiricalFor", () => {
 
   it("returns null when no matching bin exists", () => {
     expect(empiricalFor(mockModel, 5000, 20_000)).toBeNull();
+  });
+});
+
+describe("calibrateProb", () => {
+  it("returns raw prob when calibration data is absent or insufficient", () => {
+    expect(calibrateProb(null, null)).toBeNull();
+    expect(calibrateProb(0.65, null)).toBe(0.65);
+    expect(calibrateProb(0.65, [])).toBe(0.65);
+    expect(calibrateProb(0.65, [{ from: 0.5, to: 0.8, predicted: 0.65, actual: 0.55, n: 1 }])).toBe(0.65);
+  });
+
+  it("adjusts predicted prob towards actual personal win rate based on sample size", () => {
+    const buckets = [
+      { from: 0.0, to: 0.35, predicted: 0.25, actual: 0.3, n: 10 },
+      { from: 0.35, to: 0.65, predicted: 0.5, actual: 0.52, n: 15 },
+      { from: 0.65, to: 1.0, predicted: 0.75, actual: 0.6, n: 20 },
+    ];
+
+    // Player with 75% model predicted probability actually only won 60% across 20 samples
+    const calibrated = calibrateProb(0.75, buckets);
+    expect(calibrated).not.toBeNull();
+    expect(calibrated!).toBeLessThan(0.75);
+    expect(calibrated!).toBeGreaterThan(0.6);
   });
 });

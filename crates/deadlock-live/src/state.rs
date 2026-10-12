@@ -128,7 +128,10 @@ impl LiveState {
         if let Some(i) = self.players.iter().position(|p| p.account_id == account_id) {
             &mut self.players[i]
         } else {
-            self.players.push(LivePlayer { account_id, ..Default::default() });
+            self.players.push(LivePlayer {
+                account_id,
+                ..Default::default()
+            });
             self.players.last_mut().unwrap()
         }
     }
@@ -141,15 +144,28 @@ pub enum EngineEvent {
     GameStarted,
     GameStopped,
     /// From console.log: a match id was seen.
-    MatchDetected { match_id: u64, source: String },
+    MatchDetected {
+        match_id: u64,
+        source: String,
+    },
     /// From console.log: lobby players seen (account ids), before the live stream is up.
-    LobbyPlayers { account_ids: Vec<u32> },
-    LiveConnected { match_id: u64 },
+    LobbyPlayers {
+        account_ids: Vec<u32>,
+    },
+    LiveConnected {
+        match_id: u64,
+    },
     /// Progress note for the status line (not an error).
-    Status { message: String },
+    Status {
+        message: String,
+    },
     LiveState(LiveState),
-    LiveEnded { match_id: u64 },
-    Error { message: String },
+    LiveEnded {
+        match_id: u64,
+    },
+    Error {
+        message: String,
+    },
     /// Connection checklist for the overlay (sent every process check, ~3 s).
     Diag(Diag),
 }
@@ -177,5 +193,6 @@ pub struct Diag {
 pub const STEAM64_BASE: u64 = 76_561_197_960_265_728;
 
 pub fn steam64_to_account(id: u64) -> Option<u32> {
-    id.checked_sub(STEAM64_BASE).and_then(|v| u32::try_from(v).ok())
+    id.checked_sub(STEAM64_BASE)
+        .and_then(|v| u32::try_from(v).ok())
 }

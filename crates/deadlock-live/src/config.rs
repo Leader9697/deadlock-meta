@@ -93,7 +93,11 @@ impl Default for Config {
             site_base: "http://localhost:3000".into(),
             account_id: None,
             console_log: None,
-            process_names: vec!["deadlock.exe".into(), "project8.exe".into(), "citadel.exe".into()],
+            process_names: vec![
+                "deadlock.exe".into(),
+                "project8.exe".into(),
+                "citadel.exe".into(),
+            ],
             poll_process_ms: 1500,
             poll_log_ms: 500,
             log: LogPatterns::default(),
@@ -124,10 +128,12 @@ impl Default for LogPatterns {
             // [SteamNetSockets] AuthStatus (steamid:76561198802383751):  OK  (OK)
             self_steam: vec![
                 r"AuthStatus \(steamid:(?P<id>7656119\d{10})\):\s+OK".into(),
-                r#"\[Server\] SV:\s+"[^"]*<\[U:1:(?P<id>\d+)\]><>"\s+STEAM USERID validated"#.into(),
+                r#"\[Server\] SV:\s+"[^"]*<\[U:1:(?P<id>\d+)\]><>"\s+STEAM USERID validated"#
+                    .into(),
             ],
             player: vec![
-                r#"\[Server\] SV:\s+"[^"]*<\[U:1:(?P<id>\d+)\]><>"\s+STEAM USERID validated"#.into(),
+                r#"\[Server\] SV:\s+"[^"]*<\[U:1:(?P<id>\d+)\]><>"\s+STEAM USERID validated"#
+                    .into(),
             ],
             match_end: vec![
                 r"Disconnecting from server: NETWORK_DISCONNECT_".into(),
@@ -140,9 +146,7 @@ impl Default for LogPatterns {
             hero_loaded: vec![
                 r#"\[Server\] Loaded hero (?P<entity>\d+)/(?P<hero>hero_\w+)"#.into(),
             ],
-            hero_respawn: vec![
-                r"(?P<hero>hero_\w+)\s+respawned".into(),
-            ],
+            hero_respawn: vec![r"(?P<hero>hero_\w+)\s+respawned".into()],
             game_state: vec![
                 r"Entering game state:\s*(?P<state>\d+)\s*\((?P<name>\w+)\)".into(),
                 r"ChangeGameState:\s*(?P<name>\w+)\s*\((?P<state>\d+)\)".into(),
@@ -153,7 +157,10 @@ impl Default for LogPatterns {
 
 impl Default for LiveQuery {
     fn default() -> Self {
-        let q = |name: &str, sql: &str| NamedQuery { name: name.into(), sql: sql.into() };
+        let q = |name: &str, sql: &str| NamedQuery {
+            name: name.into(),
+            sql: sql.into(),
+        };
         Self {
             queries: vec![
                 // DataFusion lower-cases unquoted identifiers: every mixed-case column must
@@ -304,7 +311,10 @@ sql = "SELECT m_steamID AS account_id FROM CCitadelPlayerController"
 
     #[test]
     fn partial_file_keeps_defaults() {
-        let c: Config = toml::from_str("site_base = \"https://meta.example\"\n[log]\nmatch_id = [\"x(?P<id>\\\\d+)\"]").unwrap();
+        let c: Config = toml::from_str(
+            "site_base = \"https://meta.example\"\n[log]\nmatch_id = [\"x(?P<id>\\\\d+)\"]",
+        )
+        .unwrap();
         assert_eq!(c.site_base, "https://meta.example");
         assert_eq!(c.log.match_id, vec!["x(?P<id>\\d+)".to_string()]);
         assert_eq!(c.log.self_steam.len(), 2); // untouched → default (authstatus + server validated)

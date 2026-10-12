@@ -60,7 +60,10 @@ impl ProcessWatch {
             return Some("Steam");
         }
         // tasklist is a process spawn: rate-limit it, and reuse the last answer in between
-        let due = self.last_tasklist.map(|t| t.elapsed() >= Duration::from_secs(15)).unwrap_or(true);
+        let due = self
+            .last_tasklist
+            .map(|t| t.elapsed() >= Duration::from_secs(15))
+            .unwrap_or(true);
         if due {
             self.last_tasklist = Some(Instant::now());
             self.tasklist_hit = tasklist_has(&self.names);
@@ -78,7 +81,9 @@ const DEADLOCK_APP_NUM: u32 = 1422450;
 #[cfg(windows)]
 pub fn steam_running_app() -> Option<u32> {
     use winreg::enums::HKEY_CURRENT_USER;
-    let key = winreg::RegKey::predef(HKEY_CURRENT_USER).open_subkey("Software\\Valve\\Steam").ok()?;
+    let key = winreg::RegKey::predef(HKEY_CURRENT_USER)
+        .open_subkey("Software\\Valve\\Steam")
+        .ok()?;
     key.get_value::<u32, _>("RunningAppID").ok()
 }
 #[cfg(not(windows))]
@@ -107,7 +112,13 @@ fn tasklist_has(_names: &[String]) -> bool {
 /// `"deadlock.exe","1234","Console","1","2.000.000 K"` lines → any first column in `names`.
 pub fn tasklist_contains(csv: &str, names: &[String]) -> bool {
     csv.lines().any(|l| {
-        let first = l.trim().trim_start_matches('"').split('"').next().unwrap_or("").to_ascii_lowercase();
+        let first = l
+            .trim()
+            .trim_start_matches('"')
+            .split('"')
+            .next()
+            .unwrap_or("")
+            .to_ascii_lowercase();
         name_matches(&first, names)
     })
 }
@@ -122,7 +133,10 @@ pub fn name_matches(name: &str, names: &[String]) -> bool {
     if n.contains("meta") || n.contains("live") {
         return false;
     }
-    n.ends_with(".exe") && ["deadlock", "project8", "citadel"].iter().any(|p| n.starts_with(p))
+    n.ends_with(".exe")
+        && ["deadlock", "project8", "citadel"]
+            .iter()
+            .any(|p| n.starts_with(p))
 }
 
 pub fn is_deadlock_exe(path: &str) -> bool {
@@ -136,9 +150,15 @@ mod tests {
 
     #[test]
     fn recognises_install_path() {
-        assert!(is_deadlock_exe(r"C:\Program Files (x86)\Steam\steamapps\common\Deadlock\game\bin\win64\project8.exe"));
-        assert!(is_deadlock_exe("D:/SteamLibrary/steamapps/common/Deadlock/game/bin/win64/deadlock.exe"));
-        assert!(!is_deadlock_exe(r"C:\dev\deadlock-meta\target\debug\deadlock-meta-desktop.exe"));
+        assert!(is_deadlock_exe(
+            r"C:\Program Files (x86)\Steam\steamapps\common\Deadlock\game\bin\win64\project8.exe"
+        ));
+        assert!(is_deadlock_exe(
+            "D:/SteamLibrary/steamapps/common/Deadlock/game/bin/win64/deadlock.exe"
+        ));
+        assert!(!is_deadlock_exe(
+            r"C:\dev\deadlock-meta\target\debug\deadlock-meta-desktop.exe"
+        ));
     }
 
     #[test]
@@ -150,6 +170,9 @@ mod tests {
         assert!(name_matches("deadlock_x64.exe", &names));
         assert!(!name_matches("deadlock-meta-desktop.exe", &names));
         assert!(!name_matches("Deadlock Meta.exe", &names));
-        assert!(!tasklist_contains("\"steam.exe\",\"1\",\"Console\",\"1\",\"9 K\"", &names));
+        assert!(!tasklist_contains(
+            "\"steam.exe\",\"1\",\"Console\",\"1\",\"9 K\"",
+            &names
+        ));
     }
 }

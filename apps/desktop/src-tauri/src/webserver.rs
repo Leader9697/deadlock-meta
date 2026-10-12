@@ -24,7 +24,11 @@ pub fn local_port(site_base: &str) -> Option<u16> {
 }
 
 fn listening(port: u16) -> bool {
-    TcpStream::connect_timeout(&SocketAddr::from(([127, 0, 0, 1], port)), Duration::from_millis(300)).is_ok()
+    TcpStream::connect_timeout(
+        &SocketAddr::from(([127, 0, 0, 1], port)),
+        Duration::from_millis(300),
+    )
+    .is_ok()
 }
 
 /// Windows hands out `\\?\C:\…` paths; Node and several build tools choke on them, so drop it.
@@ -37,19 +41,29 @@ fn plain(p: PathBuf) -> PathBuf {
 
 fn node_path() -> Result<PathBuf, String> {
     let exe = std::env::current_exe().map_err(|e| format!("lokasi app tidak terbaca: {e}"))?;
-    let dir = exe.parent().ok_or("lokasi app tidak terbaca")?.to_path_buf();
+    let dir = exe
+        .parent()
+        .ok_or("lokasi app tidak terbaca")?
+        .to_path_buf();
     let p = plain(dir.join(if cfg!(windows) { "node.exe" } else { "node" }));
     if p.exists() {
         Ok(p)
     } else {
-        Err(format!("node.exe tidak ada di {} (dihapus antivirus? pasang ulang installer)", p.display()))
+        Err(format!(
+            "node.exe tidak ada di {} (dihapus antivirus? pasang ulang installer)",
+            p.display()
+        ))
     }
 }
 
 /// Last lines of the server log, for the status screen.
 pub fn log_tail(app: &AppHandle) -> String {
-    let Ok(dir) = app.path().app_log_dir() else { return String::new() };
-    let Ok(text) = std::fs::read_to_string(dir.join("web-server.log")) else { return String::new() };
+    let Ok(dir) = app.path().app_log_dir() else {
+        return String::new();
+    };
+    let Ok(text) = std::fs::read_to_string(dir.join("web-server.log")) else {
+        return String::new();
+    };
     let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
     let tail = lines[lines.len().saturating_sub(4)..].join(" | ");
     tail.chars().take(500).collect()
@@ -57,9 +71,17 @@ pub fn log_tail(app: &AppHandle) -> String {
 
 /// Starts the bundled site. The note says what happened (shown in the overlay when the
 /// site cannot be reached), so a failure is never silent.
-pub fn start(app: &AppHandle, site_base: &str, api_key: Option<&str>, extra_env: &BTreeMap<String, String>) -> (Option<Child>, String) {
+pub fn start(
+    app: &AppHandle,
+    site_base: &str,
+    api_key: Option<&str>,
+    extra_env: &BTreeMap<String, String>,
+) -> (Option<Child>, String) {
     let Some(port) = local_port(site_base) else {
-        return (None, format!("site_base ({site_base}) bukan alamat lokal, server bawaan tidak dinyalakan"));
+        return (
+            None,
+            format!("site_base ({site_base}) bukan alamat lokal, server bawaan tidak dinyalakan"),
+        );
     };
     if listening(port) {
         // dev server or another instance already serves it
@@ -70,7 +92,13 @@ pub fn start(app: &AppHandle, site_base: &str, api_key: Option<&str>, extra_env:
     };
     let server = res.join("web").join("apps").join("web").join("server.js");
     if !server.exists() {
-        return (None, format!("server.js tidak ada di {} (mode dev, atau installer tidak lengkap)", server.display()));
+        return (
+            None,
+            format!(
+                "server.js tidak ada di {} (mode dev, atau installer tidak lengkap)",
+                server.display()
+            ),
+        );
     }
     let node = match node_path() {
         Ok(n) => n,
@@ -117,7 +145,10 @@ pub fn start(app: &AppHandle, site_base: &str, api_key: Option<&str>, extra_env:
             let note = format!("server lokal dinyalakan (pid {}), port {port}", child.id());
             (Some(child), note)
         }
-        Err(e) => (None, format!("node tidak bisa dijalankan: {e} (diblokir antivirus/AppLocker?)")),
+        Err(e) => (
+            None,
+            format!("node tidak bisa dijalankan: {e} (diblokir antivirus/AppLocker?)"),
+        ),
     }
 }
 
@@ -127,7 +158,10 @@ mod tests {
 
     #[test]
     fn extended_length_prefix_is_dropped() {
-        assert_eq!(plain(PathBuf::from(r"\\?\C:\Apps\web")), PathBuf::from(r"C:\Apps\web"));
+        assert_eq!(
+            plain(PathBuf::from(r"\\?\C:\Apps\web")),
+            PathBuf::from(r"C:\Apps\web")
+        );
         assert_eq!(plain(PathBuf::from("/opt/app")), PathBuf::from("/opt/app"));
     }
 

@@ -7,7 +7,7 @@ import { emit, listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import type { BuildStep, DeathPattern, DeathReview, DraftOddsResult, HeroCombo, EnemyMatchup, ImbueAdvice, ItemPlay, GamePlan, LiveState, MacroPlan, MatchLog, PlayerScout, TeamPhaseCompare, Tip, WinSmoothState, MacroHoldState, TipHoldState } from "@deadlock/core";
-import { formatClock, smoothWinProb, holdMacroPlan, stabilizeTips, computeLagSeconds, filterPendingBuys, computeSoulsPacing } from "@deadlock/core";
+import { formatClock, smoothWinProb, holdMacroPlan, stabilizeTips, computeLagSeconds, filterPendingBuys, computeSoulsPacing, calibrateProb } from "@deadlock/core";
 
 // ---------- engine events (Rust serde: tag "type", kebab-case) ----------
 type EngineEvent =
@@ -116,6 +116,10 @@ interface HeroInfo {
   phases: { phases: Record<"early" | "mid" | "late", { winrate: number; matches: number }>; peak: string | null; scaling: number } | null;
   builds: { id: number; name: string; winrate: number; matches: number }[];
   itemsByTier?: Record<string, { id: number; name: string; slot: "weapon" | "vitality" | "spirit"; winrate: number; delta: number; avgBuyTimeS?: number }[]>;
+  counters?: {
+    advantages: { heroId: number; name: string; delta: number; winrate: number }[];
+    threats: { heroId: number; name: string; delta: number; winrate: number }[];
+  };
 }
 interface Buy { id: number; name: string; tier: number; cost: number | null; slot: "weapon" | "vitality" | "spirit"; score: number; affordable: boolean; reason: string }
 interface LiveResp {
@@ -320,16 +324,17 @@ function heroIcon(id: number, cls = "ico") {
 }
 const me = () => {
   if (!S.live) return undefined;
-  if (S.live.myAccountId) {
-    const found = S.live.players.find((p) => p.accountId === S.live!.myAccountId);
+  const myAcc = S.live.myAccountId || S.steamProfile?.account_id || S.settings?.accountId;
+  if (myAcc) {
+    const found = S.live.players.find((p) => p.accountId === myAcc);
     if (found) return found;
   }
   if (S.pregameHero) {
     const foundByHero = S.live.players.find((p) => p.heroId === S.pregameHero);
     if (foundByHero) return foundByHero;
   }
-  // Fallback: pick the first player on team Amber (0) or team Sapphire (1)
-  return S.live.players[0];
+  // Fallback: pick the first friendly player on team Amber (0), or first player if single team
+  return S.live.players.find((p) => p.team === 0) ?? S.live.players[0];
 };
 async function loadHero(id: number) {
   if (S.heroInfo?.hero.id === id) return;
@@ -494,7 +499,9 @@ async function postLive(force = false) {
     });
     lastLiveSuccess = Date.now();
     const t = S.liveResp.gameTimeS;
-    S.liveResp.winProbability = smoothWin(S.liveResp.winProbability, t);
+    const rawWin = S.liveResp.winProbability;
+    const calWin = summary?.calibration ? calibrateProb(rawWin, summary.calibration.reliability) : rawWin;
+    S.liveResp.winProbability = smoothWin(calWin, t);
     S.liveResp.macro = holdMacro(S.liveResp.macro, t);
     const last = S.leadHistory[S.leadHistory.length - 1];
     if (!last || t - last[0] >= 15) S.leadHistory.push([t, S.liveResp.netWorthLead]);
@@ -819,8 +826,9 @@ function onEngine(ev: EngineEvent) {
       render();
       break;
     case "game-stopped":
-      Object.assign(S, { game: false, matchId: null, connected: false, live: null, liveResp: null, scout: null, scoutKey: "", leadHistory: [] });
+      Object.assign(S, { game: false, matchId: null, connected: false, ended: false, live: null, liveResp: null, scout: null, scoutKey: "", leadHistory: [] });
       render();
+      broadcast(true);
       break;
     case "match-detected":
       Object.assign(S, { matchId: ev.match_id, matchSource: ev.source, connected: false, ended: false, live: null, liveResp: null, error: "", note: "", leadHistory: [] });
@@ -872,6 +880,8 @@ function onEngine(ev: EngineEvent) {
           kda: `${m.kills}/${m.deaths}/${m.assists}`,
         };
       }
+      render();
+      broadcast(true);
       void postLive(true).then(() => saveLog(true));
       break;
     }
@@ -975,7 +985,7 @@ const TIP_ICON: Record<Tip["kind"], string> = {
  * (even tighter, no sub-tips) so it does not cover the fight.
  */
 function coachCard(r: LiveResp, hud = false) {
-  if (S.live?.winningTeam !== undefined) return "";
+  if (S.ended || S.live?.winningTeam !== undefined) return "";
   const staleAge = hud ? HUD.staleAgeS : (lastLiveSuccess > 0 && Date.now() - lastLiveSuccess > 15_000 ? Math.round((Date.now() - lastLiveSuccess) / 1000) : null);
   const staleTag = staleAge != null ? ` <span class="tag muted" style="font-size:9px" title="Data terakhir dari server analitik">${staleAge}s lalu</span>` : "";
 
@@ -1154,6 +1164,7 @@ interface Summary {
   best: { heroId: number; name?: string; matches: number; winrate: number; edge: number }[];
   /** cross-match habits from the overlay logs on this PC (pre-game only) */
   habits?: { matches: number; hudLines: string[]; notes: string[] } | null;
+  calibration?: { reliability: { from: number; to: number; predicted: number; actual: number; n: number }[]; brier: number | null } | null;
   matches?: SummaryMatch[];
 }
 let summary: Summary | null = null;
@@ -1611,6 +1622,7 @@ interface OverlayData {
   scout: ScoutResp | null;
   pregameHero?: number | null;
   heroInfo?: HeroInfo | null;
+  ended?: boolean;
 }
 /** why the bundled site is not reachable (from the Rust side), shown in Status koneksi */
 let webNote = "";
@@ -1634,8 +1646,9 @@ function broadcast(force = false) {
     scout: S.scout,
     pregameHero: S.pregameHero,
     heroInfo: S.heroInfo,
+    ended: S.ended,
   };
-  const key = JSON.stringify([data.r, data.matchId, data.live?.gameTimeS, data.connected, data.heroes.length, S.scoutKey, hud, S.pregameHero, S.heroInfo?.hero.id]);
+  const key = JSON.stringify([data.r, data.matchId, data.live?.gameTimeS, data.connected, data.heroes.length, S.scoutKey, hud, S.pregameHero, S.heroInfo?.hero.id, S.ended]);
   if (!force && key === lastBroadcast) return;
   lastBroadcast = key;
   void emit("overlay-data", data);
@@ -1696,7 +1709,29 @@ function renderHeroDossierBody(h: HeroInfo) {
     </section>`;
   }
 
+  let countersHtml = "";
+  if (h.counters && (h.counters.advantages.length || h.counters.threats.length)) {
+    const adv = h.counters.advantages.map((a) => `<div class="item-badge-pill" style="border-color:rgba(103,194,127,0.3)" title="${esc(a.name)} · Winrate ${pct(a.winrate, 1)} (+${(a.delta * 100).toFixed(1)}%)">
+      ${heroIcon(a.heroId, "ico sm")}
+      <span class="item-name">${esc(a.name)}</span>
+      <span class="small win" style="font-size:10px">+${(a.delta * 100).toFixed(1)}%</span>
+    </div>`).join("");
+
+    const thr = h.counters.threats.map((t) => `<div class="item-badge-pill" style="border-color:rgba(232,88,88,0.3)" title="${esc(t.name)} · Winrate ${pct(t.winrate, 1)} (${(t.delta * 100).toFixed(1)}%)">
+      ${heroIcon(t.heroId, "ico sm")}
+      <span class="item-name">${esc(t.name)}</span>
+      <span class="small loss" style="font-size:10px">${(t.delta * 100).toFixed(1)}%</span>
+    </div>`).join("");
+
+    countersHtml = `<section class="card">
+      <h3>Intel Draft & Matchup <small>Berdasarkan Head-to-Head Meta</small></h3>
+      ${adv ? `<div style="margin-top:4px"><span class="small win" style="font-weight:700">🛡️ UNGGUL LAWAN (Target Counter):</span><div class="items-tier-grid" style="margin-top:4px">${adv}</div></div>` : ""}
+      ${thr ? `<div style="margin-top:8px"><span class="small loss" style="font-weight:700">⚠️ WASPADAI (Ancaman Utama):</span><div class="items-tier-grid" style="margin-top:4px">${thr}</div></div>` : ""}
+    </section>`;
+  }
+
   return `<section class="card"><h3>Kurva Scaling Match <small>Winrate per fase</small></h3>${phaseHtml}</section>
+  ${countersHtml}
   <section class="card"><h3>Build Komunitas <small>Pilih & Copy ID ke Deadlock</small></h3>${builds}</section>
   ${itemsTierHtml}`;
 }
@@ -2626,6 +2661,10 @@ function startingItemsHud(heroId: number | null) {
 }
 
 function renderWidget() {
+  if (S.ended && !editing) {
+    $("app").innerHTML = "";
+    return;
+  }
   const r = S.liveResp;
   const m = me();
   let html = "";
@@ -2745,6 +2784,7 @@ async function widgetBoot() {
       } catch {}
     }
     if (d.heroInfo !== undefined) S.heroInfo = d.heroInfo;
+    if (d.ended !== undefined) S.ended = d.ended;
     renderWidget();
   });
   await listen<boolean>("edit-mode", (e) => {

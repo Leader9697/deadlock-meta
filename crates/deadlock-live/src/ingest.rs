@@ -42,7 +42,9 @@ pub fn parse_cache_head(head: &[u8]) -> Option<MatchSalt> {
     }
     let match_id: u64 = txt(2)?.parse().ok()?;
     let salt: u32 = txt(3)?.parse().ok()?;
-    let cluster_id = re_host.captures(head).and_then(|h| std::str::from_utf8(&h[1]).ok()?.parse().ok());
+    let cluster_id = re_host
+        .captures(head)
+        .and_then(|h| std::str::from_utf8(&h[1]).ok()?.parse().ok());
     let meta = &c[4] == b"meta";
     Some(MatchSalt {
         match_id,
@@ -56,12 +58,15 @@ pub fn parse_cache_head(head: &[u8]) -> Option<MatchSalt> {
 static RE_PATH: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
 static RE_HOST: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
 fn static_regex() {
-    RE_PATH.get_or_init(|| Regex::new(r"/(\d{6,8})/(\d{5,12})_(\d{1,10})\.(meta|dem)\.bz2").unwrap());
+    RE_PATH
+        .get_or_init(|| Regex::new(r"/(\d{6,8})/(\d{5,12})_(\d{1,10})\.(meta|dem)\.bz2").unwrap());
     RE_HOST.get_or_init(|| Regex::new(r"replay(\d{1,5})\.valve\.net").unwrap());
 }
 
 pub fn httpcache_dir() -> Option<PathBuf> {
-    let d = crate::steam::steam_dir()?.join("appcache").join("httpcache");
+    let d = crate::steam::steam_dir()?
+        .join("appcache")
+        .join("httpcache");
     d.is_dir().then_some(d)
 }
 
@@ -71,7 +76,9 @@ pub fn scan(dir: &Path, since: Option<SystemTime>) -> Vec<MatchSalt> {
     let mut stack = vec![dir.to_path_buf()];
     let mut buf = vec![0u8; HEAD_BYTES];
     while let Some(d) = stack.pop() {
-        let Ok(rd) = std::fs::read_dir(&d) else { continue };
+        let Ok(rd) = std::fs::read_dir(&d) else {
+            continue;
+        };
         for e in rd.flatten() {
             let p = e.path();
             let Ok(md) = e.metadata() else { continue };
@@ -84,7 +91,9 @@ pub fn scan(dir: &Path, since: Option<SystemTime>) -> Vec<MatchSalt> {
                     continue;
                 }
             }
-            let Ok(mut f) = std::fs::File::open(&p) else { continue };
+            let Ok(mut f) = std::fs::File::open(&p) else {
+                continue;
+            };
             let n = f.read(&mut buf).unwrap_or(0);
             if let Some(s) = parse_cache_head(&buf[..n]) {
                 out.insert(s);
@@ -95,11 +104,18 @@ pub fn scan(dir: &Path, since: Option<SystemTime>) -> Vec<MatchSalt> {
 }
 
 fn load_seen(path: &Path) -> BTreeSet<String> {
-    std::fs::read_to_string(path).map(|s| s.lines().map(str::to_string).collect()).unwrap_or_default()
+    std::fs::read_to_string(path)
+        .map(|s| s.lines().map(str::to_string).collect())
+        .unwrap_or_default()
 }
 
 fn key(s: &MatchSalt) -> String {
-    format!("{}:{}:{}", s.match_id, s.metadata_salt.unwrap_or(0), s.replay_salt.unwrap_or(0))
+    format!(
+        "{}:{}:{}",
+        s.match_id,
+        s.metadata_salt.unwrap_or(0),
+        s.replay_salt.unwrap_or(0)
+    )
 }
 
 /// Background loop: full scan at start, then every 2 minutes for new cache files.
@@ -108,15 +124,23 @@ pub async fn run(api_base: String, seen_path: PathBuf) {
         tracing::info!("ingest: Steam httpcache not found");
         return;
     };
-    let http = reqwest::Client::builder().user_agent("deadlock-meta-desktop/0.1").build().expect("http client");
+    let http = reqwest::Client::builder()
+        .user_agent("deadlock-meta-desktop/0.1")
+        .build()
+        .expect("http client");
     let url = format!("{}/v1/matches/salts", api_base.trim_end_matches('/'));
     let mut seen = load_seen(&seen_path);
     let mut since: Option<SystemTime> = None;
     loop {
         let started = SystemTime::now();
         let dir2 = dir.clone();
-        let found = tokio::task::spawn_blocking(move || scan(&dir2, since)).await.unwrap_or_default();
-        let fresh: Vec<MatchSalt> = found.into_iter().filter(|s| !seen.contains(&key(s))).collect();
+        let found = tokio::task::spawn_blocking(move || scan(&dir2, since))
+            .await
+            .unwrap_or_default();
+        let fresh: Vec<MatchSalt> = found
+            .into_iter()
+            .filter(|s| !seen.contains(&key(s)))
+            .collect();
         let mut ok = true;
         for chunk in fresh.chunks(100) {
             match http.post(&url).json(chunk).send().await {
@@ -136,7 +160,10 @@ pub async fn run(api_base: String, seen_path: PathBuf) {
             }
         }
         if !fresh.is_empty() {
-            let _ = std::fs::write(&seen_path, seen.iter().cloned().collect::<Vec<_>>().join("\n"));
+            let _ = std::fs::write(
+                &seen_path,
+                seen.iter().cloned().collect::<Vec<_>>().join("\n"),
+            );
             tracing::info!("ingest: submitted {} match salt(s)", fresh.len());
         }
         // only move the window forward when everything was submitted
@@ -156,10 +183,16 @@ mod tests {
         let mut head = b"\x00\x01garbageHTTP/1.1 200 OK\nhttp://replay404.valve.net/1422450/38123456_1234567890.meta.bz2\x00\x00".to_vec();
         head.extend_from_slice(&[0u8; 50]);
         let s = parse_cache_head(&head).unwrap();
-        assert_eq!((s.match_id, s.cluster_id, s.metadata_salt, s.replay_salt), (38123456, Some(404), Some(1234567890), None));
+        assert_eq!(
+            (s.match_id, s.cluster_id, s.metadata_salt, s.replay_salt),
+            (38123456, Some(404), Some(1234567890), None)
+        );
 
         let d = parse_cache_head(b"replay183.valve.net\x00/1422450/38000001_77.dem.bz2").unwrap();
-        assert_eq!((d.match_id, d.cluster_id, d.replay_salt), (38000001, Some(183), Some(77)));
+        assert_eq!(
+            (d.match_id, d.cluster_id, d.replay_salt),
+            (38000001, Some(183), Some(77))
+        );
 
         // other games' replays are ignored
         assert!(parse_cache_head(b"http://replay1.valve.net/570/7000000000_1.meta.bz2").is_none());
@@ -171,7 +204,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let sub = dir.path().join("a3");
         std::fs::create_dir_all(&sub).unwrap();
-        std::fs::write(sub.join("x"), b"http://replay9.valve.net/1422450/31000000_5.meta.bz2").unwrap();
+        std::fs::write(
+            sub.join("x"),
+            b"http://replay9.valve.net/1422450/31000000_5.meta.bz2",
+        )
+        .unwrap();
         std::fs::write(sub.join("y"), b"unrelated").unwrap();
         let all = scan(dir.path(), None);
         assert_eq!(all.len(), 1);

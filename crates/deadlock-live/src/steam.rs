@@ -18,7 +18,10 @@ pub enum Vdf {
 impl Vdf {
     pub fn get(&self, key: &str) -> Option<&Vdf> {
         match self {
-            Vdf::Obj(m) => m.iter().find(|(k, _)| k.eq_ignore_ascii_case(key)).map(|(_, v)| v),
+            Vdf::Obj(m) => m
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case(key))
+                .map(|(_, v)| v),
             Vdf::Str(_) => None,
         }
     }
@@ -136,7 +139,9 @@ pub fn steam_dir() -> Option<PathBuf> {
     #[cfg(windows)]
     {
         use winreg::enums::HKEY_CURRENT_USER;
-        if let Ok(key) = winreg::RegKey::predef(HKEY_CURRENT_USER).open_subkey("Software\\Valve\\Steam") {
+        if let Ok(key) =
+            winreg::RegKey::predef(HKEY_CURRENT_USER).open_subkey("Software\\Valve\\Steam")
+        {
             if let Ok(p) = key.get_value::<String, _>("SteamPath") {
                 let p = PathBuf::from(p.replace('/', "\\"));
                 if p.exists() {
@@ -153,7 +158,10 @@ pub fn steam_dir() -> Option<PathBuf> {
     #[cfg(not(windows))]
     {
         let home = std::env::var_os("HOME").map(PathBuf::from)?;
-        [".steam/steam", ".local/share/Steam"].iter().map(|p| home.join(p)).find(|p| p.exists())
+        [".steam/steam", ".local/share/Steam"]
+            .iter()
+            .map(|p| home.join(p))
+            .find(|p| p.exists())
     }
 }
 
@@ -179,8 +187,16 @@ pub fn most_recent_profile(loginusers: &str) -> Option<(u32, String, String, Str
     let mut fallback = None;
     for (steam64, info) in users.entries() {
         let id = steam64.parse::<u64>().ok().and_then(steam64_to_account)?;
-        let persona = info.get("PersonaName").and_then(Vdf::as_str).unwrap_or("Pemain Deadlock").to_string();
-        let account = info.get("AccountName").and_then(Vdf::as_str).unwrap_or("").to_string();
+        let persona = info
+            .get("PersonaName")
+            .and_then(Vdf::as_str)
+            .unwrap_or("Pemain Deadlock")
+            .to_string();
+        let account = info
+            .get("AccountName")
+            .and_then(Vdf::as_str)
+            .unwrap_or("")
+            .to_string();
         let recent = info.get("MostRecent").and_then(Vdf::as_str) == Some("1");
         let auto = info.get("AutoLogin").and_then(Vdf::as_str) == Some("1");
         let item = (id, steam64.clone(), persona, account);
@@ -219,7 +235,10 @@ pub fn find_steam_avatar_hash(steam_dir: &Path, account_id: u32, steam64: &str) 
         if line.contains("\"avatar\"") {
             for p in line.split('"') {
                 let trimmed = p.trim();
-                if trimmed.len() == 40 && trimmed != "0000000000000000000000000000000000000000" && trimmed.chars().all(|c| c.is_ascii_hexdigit()) {
+                if trimmed.len() == 40
+                    && trimmed != "0000000000000000000000000000000000000000"
+                    && trimmed.chars().all(|c| c.is_ascii_hexdigit())
+                {
                     return Some(trimmed.to_string());
                 }
             }
@@ -255,10 +274,18 @@ pub fn deadlock_dir_from_libraryfolders(libraryfolders: &str) -> Option<PathBuf>
     let root = parse_vdf(libraryfolders);
     let folders = root.get("libraryfolders")?;
     for (_, lib) in folders.entries() {
-        let has = lib.get("apps").map(|a| a.get(DEADLOCK_APP_ID).is_some()).unwrap_or(false);
+        let has = lib
+            .get("apps")
+            .map(|a| a.get(DEADLOCK_APP_ID).is_some())
+            .unwrap_or(false);
         if has {
             let base = lib.get("path")?.as_str()?;
-            return Some(Path::new(base).join("steamapps").join("common").join("Deadlock"));
+            return Some(
+                Path::new(base)
+                    .join("steamapps")
+                    .join("common")
+                    .join("Deadlock"),
+            );
         }
     }
     None
@@ -274,7 +301,12 @@ pub fn deadlock_dir() -> Option<PathBuf> {
 
 /// `-condebug` writes here.
 pub fn console_log_path() -> Option<PathBuf> {
-    Some(deadlock_dir()?.join("game").join("citadel").join("console.log"))
+    Some(
+        deadlock_dir()?
+            .join("game")
+            .join("citadel")
+            .join("console.log"),
+    )
 }
 
 #[cfg(test)]
@@ -324,13 +356,25 @@ mod tests {
     #[test]
     fn finds_deadlock_library() {
         let p = deadlock_dir_from_libraryfolders(LIBRARYFOLDERS).unwrap();
-        assert_eq!(p, Path::new(r"D:\SteamLibrary").join("steamapps").join("common").join("Deadlock"));
+        assert_eq!(
+            p,
+            Path::new(r"D:\SteamLibrary")
+                .join("steamapps")
+                .join("common")
+                .join("Deadlock")
+        );
     }
 
     #[test]
     fn handles_escaped_quotes() {
         let v = parse_vdf(LOGINUSERS);
-        let name = v.get("users").unwrap().get("76561198012345678").unwrap().get("PersonaName").unwrap();
+        let name = v
+            .get("users")
+            .unwrap()
+            .get("76561198012345678")
+            .unwrap()
+            .get("PersonaName")
+            .unwrap();
         assert_eq!(name.as_str(), Some("Faris \"F\""));
     }
 }

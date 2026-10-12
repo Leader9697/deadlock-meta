@@ -235,3 +235,30 @@ export function empiricalFor(model: WinModel | null, gameTimeS: number, lead: nu
   if (!row) return null;
   return { ...row, leaderIsMe: lead >= 0 };
 }
+
+export interface CalibrationReliabilityBucket {
+  from: number;
+  to: number;
+  predicted: number;
+  actual: number;
+  n: number;
+}
+
+/**
+ * Adjusts raw model win probability using personal calibration reliability data
+ * (closing the loop from cross-match log calibration).
+ * Only applies when player has sufficient sample size.
+ */
+export function calibrateProb(rawP: number | null, reliability?: CalibrationReliabilityBucket[] | null): number | null {
+  if (rawP === null || !Number.isFinite(rawP)) return null;
+  if (!reliability || reliability.length < 3) return rawP;
+
+  // Find corresponding reliability bucket
+  const bucket = reliability.find((b) => rawP >= b.from && rawP < b.to);
+  if (!bucket || bucket.n < 3) return rawP;
+
+  // Smoothly blend rawP with empirical actual win rate
+  const weight = Math.min(0.4, bucket.n * 0.02);
+  const adjusted = (1 - weight) * rawP + weight * bucket.actual;
+  return Math.max(0.01, Math.min(0.99, adjusted));
+}

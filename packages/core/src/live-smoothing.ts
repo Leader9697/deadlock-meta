@@ -163,18 +163,26 @@ export interface SoulsPacing {
  * Calculates laning souls pacing benchmark for real-time coaching feedback.
  * In high-level Deadlock, pacing ramps smoothly to ~9,200 souls at minute 10.
  */
-export function computeSoulsPacing(currentSouls: number, gameTimeS: number): SoulsPacing | null {
+export function computeSoulsPacing(
+  currentSouls: number,
+  gameTimeS: number,
+  heroBenchmark10m?: number,
+): SoulsPacing | null {
   if (gameTimeS <= 60) return null;
   const mins = gameTimeS / 60;
+  const base10m = heroBenchmark10m && Number.isFinite(heroBenchmark10m)
+    ? Math.max(6000, Math.min(13000, heroBenchmark10m))
+    : 9200;
 
   let target: number;
   if (gameTimeS <= 600) {
     // Quadratic ramp during 0-10m laning phase to match creep wave value scaling
     const progress = gameTimeS / 600;
-    target = Math.round(9200 * (0.6 * progress + 0.4 * progress * progress));
+    target = Math.round(base10m * (0.6 * progress + 0.4 * progress * progress));
   } else {
-    // Post-laning progression: 9200 + ~1280/min
-    target = Math.round(9200 + (mins - 10) * 1280);
+    // Post-laning progression: base10m + scaling/min
+    const postRate = Math.round(base10m * 0.139);
+    target = Math.round(base10m + (mins - 10) * postRate);
   }
 
   const delta = currentSouls - target;

@@ -31,7 +31,10 @@ async fn mock_api(spectate_down: bool) -> String {
                     let resp = format!("HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}", body.len(), body);
                     let _ = sock.write_all(resp.as_bytes()).await;
                 } else if path.starts_with("/v1/matches/demo/live/query") {
-                    assert!(path.contains("broadcast_url=http%3A%2F%2Ftv.example%2F777"), "{path}");
+                    assert!(
+                        path.contains("broadcast_url=http%3A%2F%2Ftv.example%2F777"),
+                        "{path}"
+                    );
                     let _ = sock.write_all(b"HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\nconnection: close\r\n\r\n").await;
                     // route by the table each default query selects from
                     let rows: Vec<&str> = if path.contains("CCitadelPlayerController") {
@@ -89,7 +92,10 @@ async fn run_case(spectate_down: bool) {
         account_id: Some(52_079_950),
         process_names: vec!["definitely-not-running.exe".into()],
         console_log: Some(std::env::temp_dir().join("no-such-console.log")),
-        live: deadlock_live::config::LiveQuery { emit_every_ms: 0, ..Default::default() },
+        live: deadlock_live::config::LiveQuery {
+            emit_every_ms: 0,
+            ..Default::default()
+        },
         ..Default::default()
     };
     let (ev_tx, mut ev_rx) = mpsc::channel(64);
@@ -101,7 +107,10 @@ async fn run_case(spectate_down: bool) {
     let mut saw_connected = false;
     let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
     loop {
-        let ev = tokio::time::timeout_at(deadline, ev_rx.recv()).await.expect("timed out").expect("engine stopped");
+        let ev = tokio::time::timeout_at(deadline, ev_rx.recv())
+            .await
+            .expect("timed out")
+            .expect("engine stopped");
         match ev {
             EngineEvent::LiveConnected { match_id } => {
                 assert_eq!(match_id, 777);
@@ -113,7 +122,10 @@ async fn run_case(spectate_down: bool) {
                 break;
             }
             EngineEvent::Error { message } => panic!("engine error: {message}"),
-            EngineEvent::Status { message } => assert!(!message.contains("503"), "listing should win before spectate: {message}"),
+            EngineEvent::Status { message } => assert!(
+                !message.contains("503"),
+                "listing should win before spectate: {message}"
+            ),
             _ => {}
         }
     }
@@ -125,8 +137,15 @@ async fn run_case(spectate_down: bool) {
     assert_eq!(s.match_id, Some(777));
     assert_eq!(s.my_account_id, 52_079_950);
     assert_eq!(s.players.len(), 3);
-    let me = s.players.iter().find(|p| p.account_id == 52_079_950).unwrap();
-    assert_eq!((me.team, me.hero_id, me.net_worth, me.souls), (0, 6, 6200, Some(700)));
+    let me = s
+        .players
+        .iter()
+        .find(|p| p.account_id == 52_079_950)
+        .unwrap();
+    assert_eq!(
+        (me.team, me.hero_id, me.net_worth, me.souls),
+        (0, 6, 6200, Some(700))
+    );
     assert_eq!(me.item_ids, vec![1001]);
     let enemy = s.players.iter().find(|p| p.account_id == 1001).unwrap();
     assert_eq!((enemy.team, enemy.item_ids.clone()), (1, vec![2002]));
