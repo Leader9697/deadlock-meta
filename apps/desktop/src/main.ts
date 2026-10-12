@@ -2486,12 +2486,37 @@ function teamHtml(hud: boolean) {
   if (!ts) return "";
   const rows = ts.rows
     .map(
-      (r) => `<div class="row team-line${r.isMe ? " me" : ""}">${heroIcon(r.p.heroId, "ico sm")}<span class="name">${r.isMe ? "Kamu" : esc(ts.name(r.p.heroId))}</span><span class="small">${k(r.dmg)}</span><span class="small muted" style="width:30px;text-align:right">${Math.round(r.share * 100)}%</span><span class="small ${r.nwRel >= 1 ? "win" : r.nwRel < 0.8 ? "loss" : ""}">${k(r.p.netWorth)}</span><span class="small muted">${r.p.kills}/${r.p.deaths}/${r.p.assists}</span>${
-        r.p.dead ? `<span class="tag loss">✝${r.p.respawnInS ? Math.max(0, Math.round(r.p.respawnInS - (hud ? HUD.lag : lagSeconds()))) + "s" : ""}</span>` : ""
-      }</div>`,
+      (r) => `<div class="team-line${r.isMe ? " me" : ""}">
+        ${heroIcon(r.p.heroId, "ico sm")}
+        <span class="name">${r.isMe ? "Kamu" : esc(ts.name(r.p.heroId))}</span>
+        <span class="small team-dmg">${k(r.dmg)}</span>
+        <span class="small muted team-share">${Math.round(r.share * 100)}%</span>
+        <span class="small ${r.nwRel >= 1 ? "win" : r.nwRel < 0.8 ? "loss" : ""} team-nw">${k(r.p.netWorth)}</span>
+        ${
+          r.p.dead
+            ? `<span class="tag loss team-status">💀${r.p.respawnInS ? Math.max(0, Math.round(r.p.respawnInS - (hud ? HUD.lag : lagSeconds()))) + "s" : ""}</span>`
+            : `<span class="small muted team-kda">${r.p.kills}/${r.p.deaths}/${r.p.assists}</span>`
+        }
+      </div>`,
     )
     .join("");
-  return `<section class="card hud team"><h3>Tim <small>damage · % · NW · K/D/A</small></h3>${rows}${ts.notes.map((n) => `<div class="small" style="margin-top:4px">→ ${esc(n)}</div>`).join("")}</section>`;
+  return `<section class="card hud team">
+    <div class="hud-title-bar">
+      <h3>Tim</h3>
+      <span class="small muted" style="font-size:10px">${hud ? "Ctrl+Shift+T = Lawan" : "damage · % · NW · K/D/A"}</span>
+    </div>
+    <div class="hud-table-header team-header">
+      <span style="grid-column: 1 / 3;">PEMAIN</span>
+      <span style="text-align:right">DMG</span>
+      <span style="text-align:right">%</span>
+      <span style="text-align:right">NW</span>
+      <span style="text-align:center">K/D/A</span>
+    </div>
+    <div class="team-table">
+      ${rows}
+    </div>
+    ${ts.notes.map((n) => `<div class="small" style="margin-top:4px;padding:0 2px">💡 ${esc(n)}</div>`).join("")}
+  </section>`;
 }
 
 /** one line for HUD Situasi */
@@ -2547,19 +2572,41 @@ function renderWidget() {
             <div class="muted" style="font-size:10px">${esc(priorityEnemy.priorityReason ?? "")}</div>
           </div>`
         : "";
-      html = `<section class="card hud"><h3>Lawan</h3>${priorityBadge}${r.matchups
-        .map((mu) => {
-          const v = VERDICT[mu.verdict];
-          const isDead = mu.verdict === "dead";
-          const avatar = `<div class="avatar-wrapper ${isDead ? "dead" : ""} ${mu.isTargetPriority ? "target-priority" : ""}">
-            ${heroIcon(mu.heroId, "ico sm")}
-            ${isDead && mu.respawnInS ? `<div class="avatar-respawn-overlay">${Math.round(mu.respawnInS)}s</div>` : ""}
-          </div>`;
-          return `<div class="row enemy-line ${mu.verdict}${mu.isTargetPriority ? " focus" : ""}">${avatar}<span class="name">${esc(mu.heroName)}</span>${mu.laneOpponent ? `<span class="tag hot">L</span>` : ""}${(mu.archetypes ?? []).slice(0, 1).map((a) => `<span class="tag">${ARCH_NAME[a] ?? a}</span>`).join("")}<span class="small ${mu.nwDiff > 0 ? "loss" : "win"}">${mu.nwDiff >= 0 ? "+" : "−"}${k(Math.abs(mu.nwDiff))}</span><span class="tag ${v.cls}">${v.label}${mu.verdict === "dead" && mu.respawnInS ? ` ${Math.round(mu.respawnInS)}s` : ""}</span></div>${
-            mu.bestCounter && mu.verdict !== "dead" ? `<div class="small muted counter-line">↳ ${esc(mu.bestCounter.name)} <span class="win">+${(mu.bestCounter.delta * 100).toFixed(1)}%</span></div>` : ""
-          }`;
-        })
-        .join("")}</section>`;
+      html = `<section class="card hud hud-enemies">
+        <div class="hud-title-bar">
+          <h3>Lawan</h3>
+          <span class="small muted" style="font-size:10px">Ctrl+Shift+T = Tim</span>
+        </div>
+        ${priorityBadge}
+        <div class="hud-table-header enemy-header">
+          <span style="grid-column: 1 / 3;">HERO</span>
+          <span style="text-align:right">DIFF NW</span>
+          <span style="text-align:center">STATUS</span>
+        </div>
+        <div class="enemy-table">
+          ${r.matchups
+            .map((mu) => {
+              const v = VERDICT[mu.verdict];
+              const isDead = mu.verdict === "dead";
+              const avatar = `<div class="avatar-wrapper ${isDead ? "dead" : ""} ${mu.isTargetPriority ? "target-priority" : ""}">
+                ${heroIcon(mu.heroId, "ico sm")}
+                ${isDead && mu.respawnInS ? `<div class="avatar-respawn-overlay">${Math.round(mu.respawnInS)}s</div>` : ""}
+              </div>`;
+              return `<div class="enemy-line ${mu.verdict}${mu.isTargetPriority ? " focus" : ""}">
+                ${avatar}
+                <div class="enemy-name-cell">
+                  <span class="name">${esc(mu.heroName)}</span>
+                  ${mu.laneOpponent ? `<span class="tag hot lane-badge" title="Lawan 1 Lane">LANE</span>` : ""}
+                </div>
+                <span class="small ${mu.nwDiff > 0 ? "loss" : "win"} enemy-nw">${mu.nwDiff >= 0 ? "+" : "−"}${k(Math.abs(mu.nwDiff))}</span>
+                <span class="tag ${v.cls} enemy-status">${v.label}${mu.verdict === "dead" && mu.respawnInS ? ` ${Math.round(mu.respawnInS)}s` : ""}</span>
+              </div>${
+                mu.bestCounter && mu.verdict !== "dead" ? `<div class="small muted counter-line">↳ ${esc(mu.bestCounter.name)} <span class="win">+${(mu.bestCounter.delta * 100).toFixed(1)}%</span></div>` : ""
+              }`;
+            })
+            .join("")}
+        </div>
+      </section>`;
     }
   } else if (WIDGET === "buy" && (S.matchId || S.live)) {
     const isBrawl = S.live?.gameMode === "brawl" || (S.live && S.live.players.length > 0 && S.live.players.length <= 8);
