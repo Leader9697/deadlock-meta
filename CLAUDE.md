@@ -105,6 +105,14 @@ habits: deaths before 10:00, souls at 10:00 vs hero average, items always bought
 - Tests: `npm test` (core + web, incl. a `/api/live` route test with a stubbed data layer),
   `cargo test --workspace`.
 
+## Git (how Faris wants it)
+- A fix goes **straight to `main`**: commit and push to main as soon as it is done and the
+  checks pass. No feature branch, no PR, no "mau gue push?" — he asked for this explicitly.
+  `ci.yml` only triggers on `main` (push / PR to main), so a branch push runs no checks at all
+  and nothing shows up for him.
+- Push a tag (`v0.3.x`) only when he asks for a release: that fires `release.yml` and builds the
+  installer that installed copies auto-update to.
+
 ## Release / auto-update
 1. `node scripts/bump.mjs 0.3.0` (tauri.conf.json, Cargo.toml, apps/desktop/package.json).
 2. `git commit -am "release v0.3.0" && git tag v0.3.0 && git push --follow-tags`.
