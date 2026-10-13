@@ -263,6 +263,8 @@ export interface AdaptiveInput {
   limit?: number;
   /** the item the overlay has been showing as #1 (kept until bought or invalid) */
   commit?: { itemId: number; sinceS: number } | null;
+  /** how well an item fits my kit's scaling (see scaling.ts `kitFit`); omitted = neutral */
+  kitFit?: (it: LabItem) => { score: number; why: string };
 }
 
 const pts = (x: number) => `${x >= 0 ? "+" : ""}${(x * 100).toFixed(1)}%`;
@@ -300,10 +302,17 @@ function pickInTiers(need: Need, input: AdaptiveInput, exclude: Set<number>, flo
     const activeOwned = input.me.itemIds.filter((id) => input.lab.get(id)?.is_active_item).length;
     const activePenalty = it.is_active_item && activeOwned >= 2 ? (activeOwned >= 3 ? 0.05 : 0.02) : 0;
 
-    // data first; mild preference for the phase's natural tier
-    const score = (c?.score ?? 0) * 1.0 + (hd ?? 0) * 0.5 + magnitude + ((it.item_tier ?? 1) === cap ? 0.004 : 0) + ((it.item_tier ?? 1) === cap - 1 ? 0.002 : 0) - activePenalty;
+    // data first; mild preference for the phase's natural tier; small nudge for kit scaling
+    const fit = input.kitFit?.(it) ?? { score: 0, why: "" };
+    const score = (c?.score ?? 0) * 1.0 + (hd ?? 0) * 0.5 + magnitude + fit.score + ((it.item_tier ?? 1) === cap ? 0.004 : 0) + ((it.item_tier ?? 1) === cap - 1 ? 0.002 : 0) - activePenalty;
     if (!best || score > best.score) {
-      const why = [c && Math.abs(c.score) >= 0.003 ? `vs lineup ${pts(c.score)}` : "", hd != null && Math.abs(hd) >= 0.005 ? `di hero kamu ${pts(hd)}` : ""].filter(Boolean).join(", ");
+      const why = [
+        c && Math.abs(c.score) >= 0.003 ? `vs lineup ${pts(c.score)}` : "",
+        hd != null && Math.abs(hd) >= 0.005 ? `di hero kamu ${pts(hd)}` : "",
+        fit.score > 0 ? fit.why : "",
+      ]
+        .filter(Boolean)
+        .join(", ");
       best = { item: it, score, why };
     }
   }

@@ -1,5 +1,6 @@
 export * from "./types";
 export * from "./prices";
+export * from "./scaling";
 export * from "./api";
 export * from "./stats";
 export * from "./counter";

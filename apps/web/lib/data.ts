@@ -186,6 +186,23 @@ const AUTO_MIN_PATCH_AGE_S = 2 * 86400;
  *  - SINCE_PATCH: since the last big patch.
  *  - N: the last N days.
  */
+/**
+ * What the stats on a page actually cover, so the UI can say it: "sejak patch 10 Okt (3 hari)"
+ * or "7 hari terakhir". `patchTs` is the latest big patch; a build last edited before it may
+ * be outdated even when its winrate (measured inside the window) looks fine.
+ */
+export interface DataWindow {
+  from: number;
+  patchTs: number | null;
+  mode: "patch" | "days";
+  days: number;
+}
+export async function dataWindow(days: number): Promise<DataWindow> {
+  const [from, patchTs] = await Promise.all([windowStart(days), getLatestPatchTs()]);
+  const sincePatch = patchTs != null && from >= patchTs - (patchTs % 3600);
+  return { from, patchTs, mode: sincePatch ? "patch" : "days", days: Math.max(1, Math.round((Date.now() / 1000 - from) / 86400)) };
+}
+
 export async function windowStart(days: number): Promise<number> {
   if (days === AUTO) {
     const ts = await getLatestPatchTs();

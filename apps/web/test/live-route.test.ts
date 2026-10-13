@@ -27,6 +27,7 @@ vi.mock("@/lib/data", () => ({
   getLaneMatchup: async () => null,
   getAbilityOrders: async () => [],
   getImbueData: async () => null,
+  dataWindow: async () => ({ from: 0, patchTs: null, mode: "days", days: 7 }),
 }));
 vi.mock("@/lib/lab", () => ({
   getLabData: async () => ({ items: [], heroes: [] }),

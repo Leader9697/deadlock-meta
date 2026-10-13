@@ -124,12 +124,27 @@ document.addEventListener(
 );
 
 // ---------- slim shapes of the website's /api responses ----------
-interface MetaHero { heroId: number; name: string; icon?: string | null; slug?: string; winrate: number; tier: string }
+interface MetaHero {
+  heroId: number;
+  name: string;
+  icon?: string | null;
+  slug?: string;
+  winrate: number;
+  tier: string;
+  matches?: number;
+  pickRate?: number;
+  kda?: number;
+  trend?: { wr: number | null; pick: number | null; banShare: number; status: string; reason: string } | null;
+}
+/** what the stats cover (from /api/meta, /api/hero, /api/live) */
+interface DataWindow { from: number; patchTs: number | null; mode: "patch" | "days"; days: number; matches?: number }
 interface HeroInfo {
   hero: { id: number; name: string };
   meta?: MetaHero | null;
   phases: { phases: Record<"early" | "mid" | "late", { winrate: number; matches: number }>; peak: string | null; scaling: number } | null;
-  builds: { id: number; name: string; winrate: number; matches: number }[];
+  builds: { id: number; name: string; winrate: number; matches: number; players?: number; version?: number; updatedAt?: number | null; stale?: boolean }[];
+  window?: DataWindow;
+  kit?: { spiritPct: number; lean: "spirit" | "weapon" | "mixed" } | null;
   itemsByTier?: Record<string, { id: number; name: string; slot: "weapon" | "vitality" | "spirit"; cost?: number | null; winrate: number; delta: number; avgBuyTimeS?: number }[]>;
   counters?: {
     advantages: { heroId: number; name: string; delta: number; winrate: number }[];
@@ -150,7 +165,7 @@ interface LiveResp {
   tips: Tip[];
   teamPhases: TeamPhaseCompare | null;
   buildPath: BuildStep[];
-  build: { id: number; name: string; winrate: number; matches: number } | null;
+  build: { id: number; name: string; winrate: number; matches: number; updatedAt?: number | null; stale?: boolean } | null;
   matchups: EnemyMatchup[];
   threats: { accountId: number; heroId: number; netWorth: number; nwShare: number; weight: number }[];
   nextBuys: Record<"all" | "weapon" | "vitality" | "spirit", Buy[]>;
@@ -225,6 +240,7 @@ const S = {
   liveResp: null as LiveResp | null,
   leadHistory: [] as [number, number][],
   heroes: new Map<number, MetaHero>(),
+  metaWindow: null as DataWindow | null,
   heroInfo: null as HeroInfo | null,
   pregameHero: (() => {
     try {
@@ -1191,7 +1207,7 @@ function buildPathCard(r: LiveResp) {
     ad?.source === "core+flex"
       ? `<small>${PHASE_NAME[ad.phase]} · flex ${ad.flexUsed}/${ad.flexMax} · ${souls(HUD_SOULS ?? soulsNow(m))} souls</small>`
       : r.build
-        ? `<small>${esc(r.build.name)} · ${pct(r.build.winrate)} <button class="copy" data-copy="${r.build.id}">ID ${r.build.id}</button></small>`
+        ? `<small>${esc(r.build.name)} · ${pct(r.build.winrate)}${r.build.stale ? ` · <span class="loss" title="Build terakhir diupdate ${r.build.updatedAt ? tgl(r.build.updatedAt) : "?"}, sebelum patch terakhir">pra-patch</span>` : ""} <button class="copy" data-copy="${r.build.id}">ID ${r.build.id}</button></small>`
         : `<small>${souls(HUD_SOULS ?? soulsNow(m))} souls di tangan</small>`;
   const sell = r.sell
     ? `<div class="small" style="margin-bottom:6px;padding:5px 7px;border-radius:6px;background:rgb(226 103 92 / .12)">${ic("swap")} <b>Jual ${esc(r.sell.sellName)}</b> (+${souls(r.sell.refund)}) → <b>${esc(r.sell.forName)}</b><div class="muted">${esc(r.sell.reason)}</div></div>`
@@ -1772,6 +1788,46 @@ function broadcast(force = false) {
   void emit("overlay-data", data);
 }
 
+// ---------- data provenance: what period / patch the numbers come from ----------
+const BULAN = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"];
+/** "10 Okt" (this year) or "10 Okt 2025" */
+function tgl(ts: number): string {
+  const d = new Date(ts * 1000);
+  const y = d.getFullYear() !== new Date().getFullYear() ? ` ${d.getFullYear()}` : "";
+  return `${d.getDate()} ${BULAN[d.getMonth()]}${y}`;
+}
+/** "3 hari lalu" / "hari ini" */
+function lalu(ts: number): string {
+  const d = Math.floor((Date.now() / 1000 - ts) / 86400);
+  return d <= 0 ? "hari ini" : d === 1 ? "kemarin" : d < 60 ? `${d} hari lalu` : `${Math.round(d / 30)} bulan lalu`;
+}
+/** "Data: sejak patch 10 Okt (3 hari) · 41.200 match" */
+function windowLabel(w: DataWindow | null | undefined): string {
+  if (!w) return "";
+  const span = w.mode === "patch" && w.patchTs ? `sejak patch ${tgl(w.patchTs)} (${w.days} hari)` : `${w.days} hari terakhir${w.patchTs ? ` · patch terakhir ${tgl(w.patchTs)}` : ""}`;
+  return `Data: ${span}${w.matches ? ` · ${w.matches.toLocaleString("id-ID")} match` : ""}`;
+}
+const META_STATUS: Record<string, { label: string; cls: string }> = {
+  confirmed: { label: "META", cls: "win" },
+  rising: { label: "NAIK", cls: "win" },
+  sleeper: { label: "SLEEPER", cls: "win" },
+  overrated: { label: "OVERRATED", cls: "loss" },
+  falling: { label: "TURUN", cls: "loss" },
+};
+function trendChip(h: MetaHero): string {
+  const st = h.trend && META_STATUS[h.trend.status];
+  return st ? `<span class="tag ${st.cls}" title="${esc(h.trend!.reason)}">${st.label}</span>` : "";
+}
+/** one line under a hero name: matches, pick rate, WR change vs the previous window */
+function heroStatLine(h: MetaHero): string {
+  const parts: string[] = [];
+  if (h.matches) parts.push(`${h.matches.toLocaleString("id-ID")} match`);
+  if (h.pickRate != null) parts.push(`pick ${pct(h.pickRate, 1)}`);
+  if (h.trend?.wr != null && Math.abs(h.trend.wr) >= 0.005) parts.push(`<span class="${h.trend.wr > 0 ? "win" : "loss"}">WR ${delta(h.trend.wr)}</span>`);
+  if (h.trend && h.trend.banShare >= 0.03) parts.push(`ban ${pct(h.trend.banShare, 0)}`);
+  return parts.join(" · ");
+}
+
 function renderHeroDossierBody(h: HeroInfo) {
   const ph = h.phases;
   const phaseHtml = ph
@@ -1782,6 +1838,9 @@ function renderHeroDossierBody(h: HeroInfo) {
          ph.scaling > 0.02 ? `${ic("up")} Scaling kuat: peluang menang meningkat di late game.` : ph.scaling < -0.02 ? `${ic("zap")} Early pressure: kuat di awal, tekan objektif sebelum ±28 menit.` : `${ic("scale")} Stabil seimbang di semua fase durasi match.`
        }</p>`
     : "";
+  // winrate + matches are counted inside the data window (this patch); the build itself may
+  // have been written for an older patch — say when it was last edited and flag it if before
+  const patchTs = h.window?.patchTs ?? null;
   const builds = h.builds.length
     ? `<div class="row small muted" style="justify-content:space-between;margin-bottom:6px;padding:0 4px;font-size:11px">
         <span style="flex:1">NAMA BUILD</span>
@@ -1791,15 +1850,39 @@ function renderHeroDossierBody(h: HeroInfo) {
       </div>` +
       h.builds
         .map(
-          (b) => `<div class="row" style="align-items:center;padding:4px 0">
+          (b) => `<div style="padding:4px 0;border-bottom:1px solid rgb(255 255 255 / .05)">
+          <div class="row" style="align-items:center">
             <span class="name" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(b.name)}">${esc(b.name)}</span>
-            <span class="small ${wrCls(b.winrate)}" style="width:70px;text-align:right;font-weight:bold" title="Win Rate build">${pct(b.winrate)}</span>
-            <span class="small muted" style="width:65px;text-align:right" title="Jumlah match yang memakai build ini">${b.matches.toLocaleString()} match</span>
+            <span class="small ${wrCls(b.winrate)}" style="width:70px;text-align:right;font-weight:bold" title="Winrate build di periode data ini">${pct(b.winrate)}</span>
+            <span class="small muted" style="width:65px;text-align:right" title="Match yang memakai build ini di periode data${b.players ? ` (${b.players.toLocaleString("id-ID")} pemain)` : ""}">${b.matches.toLocaleString("id-ID")} match</span>
             <span style="width:75px;text-align:right"><button class="copy" data-copy="${b.id}" title="Klik untuk copy ID build ke game Deadlock">ID ${b.id}</button></span>
-          </div>`,
+          </div>
+          <div class="small muted" style="font-size:11px">${
+            b.updatedAt
+              ? `Diupdate ${tgl(b.updatedAt)} (${lalu(b.updatedAt)})${b.version ? ` · v${b.version}` : ""}${
+                  b.stale
+                    ? ` · <span class="loss">${ic("alert", "xs")} dibuat sebelum patch ${patchTs ? tgl(patchTs) : "terakhir"}: cek item yang berubah</span>`
+                    : patchTs
+                      ? ` · <span class="win">${ic("check", "xs")} sesudah patch ${tgl(patchTs)}</span>`
+                      : ""
+                }`
+              : "Tanggal update tidak diketahui"
+          }</div>
+        </div>`,
         )
-        .join("")
+        .join("") +
+      `<p class="small muted" style="margin:6px 0 0">${esc(windowLabel(h.window))}. Winrate & jumlah match dihitung dari match di periode itu, jadi sudah mencerminkan patch sekarang; tanggal update menunjukkan kapan isi build terakhir diubah.</p>`
     : `<div class="empty">Belum ada build dengan sampel cukup.</div>`;
+
+  const kitNote = h.kit
+    ? `<p class="small muted" style="margin:6px 0 0">${ic("zap", "xs")} Kit: ${
+        h.kit.lean === "spirit"
+          ? `skala spirit tinggi (lebih dari ${Math.round(h.kit.spiritPct * 100)}% hero) — saran item condong ke spirit`
+          : h.kit.lean === "weapon"
+            ? `skala spirit rendah (${Math.round(h.kit.spiritPct * 100)}% persentil) — saran item condong ke senjata`
+            : "campuran spirit & senjata — saran item netral"
+      }.</p>`
+    : "";
 
   let itemsTierHtml = "";
   if (h.itemsByTier && Object.keys(h.itemsByTier).length) {
@@ -1848,7 +1931,7 @@ function renderHeroDossierBody(h: HeroInfo) {
     </section>`;
   }
 
-  return `<section class="card"><h3>Kurva Scaling Match <small>Winrate per fase</small></h3>${phaseHtml}</section>
+  return `<section class="card"><h3>Kurva Scaling Match <small>Winrate per fase</small></h3>${phaseHtml}${kitNote}</section>
   ${countersHtml}
   <section class="card"><h3>Build Komunitas <small>Pilih & Copy ID ke Deadlock</small></h3>${builds}</section>
   ${itemsTierHtml}`;
@@ -1911,8 +1994,12 @@ function renderRosterView() {
                 <span class="agent-tier-badge tier-badge-${selHero.tier.toLowerCase()}" style="position:static;font-size:11px;padding:2px 6px">${esc(selHero.tier)}-TIER</span>
               </div>
               <div class="hero-dossier-meta">
-                <span>Winrate Meta: <b class="${wrCls(selHero.winrate)}">${pct(selHero.winrate, 1)}</b></span>
+                <span>Winrate: <b class="${wrCls(selHero.winrate)}">${pct(selHero.winrate, 1)}</b></span>
+                ${trendChip(selHero)}
+                ${selHero.kda != null ? `<span class="muted">KDA ${selHero.kda.toFixed(2)}</span>` : ""}
               </div>
+              <div class="small muted" style="margin-top:2px">${heroStatLine(selHero)}${selHero.trend?.reason ? ` · ${esc(selHero.trend.reason)}` : ""}</div>
+              <div class="small muted">${esc(windowLabel(hInfo?.window ?? S.metaWindow))}</div>
               <button class="hero-pregame-btn ${S.pregameHero === selHero.heroId ? "active" : ""}" data-hero-pick="${selHero.heroId}">
                 ${S.pregameHero === selHero.heroId ? `${ic("check")} Hero Pre-Game Terpilih` : `${ic("lock")} Kunci Sebagai Hero Pre-Game`}
               </button>
@@ -1938,8 +2025,8 @@ function renderMetaView() {
   ];
   return `<div class="meta-tier-list">
     <div class="card" style="padding:10px 14px">
-      <h3 style="margin:0">Tier List Meta Deadlock <small>Diperbarui dari deadlock-api & agregat match publik</small></h3>
-      <p class="muted small" style="margin:4px 0 0">Klik kartu hero untuk langsung melihat analisis build, fase scaling, dan item kunci di Hero Roster.</p>
+      <h3 style="margin:0">Tier List Meta Deadlock <small>${esc(windowLabel(S.metaWindow)) || "deadlock-api, match publik"}</small></h3>
+      <p class="muted small" style="margin:4px 0 0">Tier = winrate (dikoreksi jumlah sampel) + pick rate. Label NAIK / TURUN / SLEEPER dibanding periode sebelumnya yang sama panjang. Klik hero untuk build & item.</p>
     </div>
     ${tiers
       .map(({ tier, title, cls, filter }) => {
@@ -1961,6 +2048,8 @@ function renderMetaView() {
                 ${heroIcon(h.heroId, "ico sm")}
                 <span class="name">${esc(h.name)}</span>
                 <span class="small ${wrCls(h.winrate)}" style="font-weight:700">${pct(h.winrate, 1)}</span>
+                ${trendChip(h)}
+                ${h.matches ? `<span class="small muted" title="${esc(heroStatLine(h).replace(/<[^>]+>/g, ""))}">${k(h.matches)}</span>` : ""}
               </div>
             `,
               )
@@ -3060,8 +3149,9 @@ async function boot() {
   // Never give up: a slow first start (antivirus scanning the bundled server) must still recover.
   for (let attempt = 0; ; attempt++) {
     try {
-      const meta = await api<{ heroes: MetaHero[] }>("/api/meta");
+      const meta = await api<{ heroes: MetaHero[]; window?: DataWindow }>("/api/meta");
       S.heroes = new Map(meta.heroes.map((h) => [h.heroId, h]));
+      S.metaWindow = meta.window ?? null;
       if (S.pregameHero) {
         S.selectedRosterHero = S.pregameHero;
         void loadHero(S.pregameHero);

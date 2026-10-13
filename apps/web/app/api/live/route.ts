@@ -15,6 +15,10 @@ import {
   heroCombo,
   isImbueItem,
   itemCost,
+  kitFit,
+  kitLean,
+  spiritPercentiles,
+  buildStale,
   maxFirstShare,
   recommendImbue,
   powerSpikes,
@@ -46,6 +50,7 @@ import {
   detectMode,
 } from "@deadlock/core";
 import {
+  dataWindow,
   getAbilityOrders,
   getBuilds,
   getCounterMatrix,
@@ -138,6 +143,7 @@ export async function POST(req: NextRequest) {
     getItemFlow(me.heroId, f.days, f.badge).catch(() => null),
     getHeroItemStats(me.heroId, f.days, f.badge).catch(() => []),
   ]);
+  const win = await dataWindow(f.days);
 
   // draft odds calculation (lineup baseline + head-to-head matchup + team synergies + phases)
   const alliesIds = state.players.filter((p) => p.team === me.team && p.heroId > 0).map((p) => p.heroId);
@@ -229,6 +235,12 @@ export async function POST(req: NextRequest) {
   const tierRows = heroItemsByTier(heroItems, items, meta.find((m) => m.heroId === me.heroId)?.matches ?? 0);
   const heroDelta = new Map<number, number>();
   for (const rows of tierRows.values()) for (const r of rows) heroDelta.set(r.item.id, r.delta);
+  // hero kits (signature abilities) → how spirit-reliant my kit is among all heroes
+  const labData = await getLabData();
+  const byClass = new Map(labData.items.map((i) => [i.class_name, i]));
+  const kitOf = new Map(labData.heroes.map((h) => [h.id, heroKit(h.items, byClass)]));
+  const myKit = kitOf.get(me.heroId) ?? [];
+  const spiritPct = spiritPercentiles(kitOf).get(me.heroId) ?? null;
   const adaptive = adaptivePath({
     me,
     gameTimeS: state.gameTimeS,
@@ -240,6 +252,7 @@ export async function POST(req: NextRequest) {
     needs,
     heroName,
     commit: state.commit ?? null,
+    kitFit: (it) => kitFit(it, spiritPct),
   });
 
   // ---- lane data, ability order, tilt ----
@@ -277,10 +290,6 @@ export async function POST(req: NextRequest) {
     ? gamePlan({ mine: teamPhases.mine, enemy: teamPhases.enemy, clockS: state.gameTimeS + delayS, winP })
     : null;
   const macro = macroPlan({ state, me, netWorthLead: summary.netWorthLead, winP, scalingDiff: teamPhases?.scalingDiff ?? 0, delayS, heroName });
-  const labData = await getLabData();
-  const byClass = new Map(labData.items.map((i) => [i.class_name, i]));
-  const kitOf = new Map(labData.heroes.map((h) => [h.id, heroKit(h.items, byClass)]));
-  const myKit = kitOf.get(me.heroId) ?? [];
   const playEnemies: PlayEnemy[] = profiles.map((pr) => {
     const pl = state.players.find((x) => x.accountId === pr.accountId);
     return {
@@ -488,7 +497,18 @@ export async function POST(req: NextRequest) {
     switched: adaptive.switched,
     teamPhases: out.teamPhases,
     buildPath: out.buildPath,
-    build: builds[0] ? { id: builds[0].build.hero_build_id, name: builds[0].build.name, winrate: builds[0].winrate, matches: builds[0].matches } : null,
+    build: builds[0]
+      ? {
+          id: builds[0].build.hero_build_id,
+          name: builds[0].build.name,
+          winrate: builds[0].winrate,
+          matches: builds[0].matches,
+          updatedAt: builds[0].build.last_updated_timestamp ?? null,
+          stale: buildStale(builds[0].build.last_updated_timestamp, win.patchTs),
+        }
+      : null,
+    kit: spiritPct == null ? null : { spiritPct, lean: kitLean(spiritPct) },
+    dataWindow: win,
     matchups: out.matchups,
     threats: summary.threats.map((t) => ({ accountId: t.player.accountId, heroId: t.player.heroId, netWorth: t.player.netWorth, nwShare: t.nwShare, weight: t.weight })),
     nextBuys: { all: slim(buys.all), weapon: slim(buys.weapon), vitality: slim(buys.vitality), spirit: slim(buys.spirit) },

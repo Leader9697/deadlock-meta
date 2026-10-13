@@ -41,6 +41,17 @@ uses the **HUD widgets** in game; he rarely opens the main panel. Keep the HUD c
   broadcast marks a match `finished` in the engine; a console.log end is recoverable — the engine
   re-reads the log every 10 s while the game is up and nothing is streaming, and `LiveConnected` /
   a winner-less `LiveState` clears `over` in lib.rs so the widgets come back.
+- Every stat the launcher shows says **what it covers**: `dataWindow()` (lib/data.ts) → "Data: sejak
+  patch 10 Okt (3 hari) · N match" (`windowLabel` in main.ts), in `/api/meta`, `/api/hero`,
+  `/api/live`. Build winrate/matches are counted inside that window (so they reflect the current
+  patch); `updatedAt` is when the build's item list was last edited, and `buildStale` flags one
+  edited before the latest big patch ("dibuat sebelum patch") — flagged, not re-ranked.
+- Hero meta trend (`/api/meta` `trend`, from `detectMeta` vs the previous window of equal length):
+  NAIK / TURUN / SLEEPER / OVERRATED / META chip + matches, pick rate, WR change, ban share.
+- Item picks weigh **kit scaling** (`scaling.ts`): the hero's spirit-power scaling on its own
+  abilities, as a percentile among all heroes, nudges spirit items up for spirit kits and weapon
+  items up for gun kits (`kitFit`, ≤ ±1.2 WR points, only in `pickInTiers` — the core plan stays
+  pure winner data). Shown in the hero dossier and in the buy reason ("kit kamu skala spirit").
 - Match win/loss from history = `match_result === player_team` (`player_match_outcome` is not
   reliable). A log whose broadcast ended before the game-over row gets its result from the match
   history (`backfillOutcomes`, in `/api/me/summary` and `/me`); the post-match card shows "hasil

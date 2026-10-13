@@ -58,6 +58,14 @@ export async function getHeroPhases(client: DeadlockClient, base: Query, init?: 
   return out;
 }
 
+/**
+ * A build last edited before the latest big patch. Its winrate is still measured on matches
+ * inside the current window (so it reflects this patch), but its item list may name items the
+ * patch changed or removed — the UI flags it, it is not re-ranked.
+ */
+export const buildStale = (updatedAt: number | null | undefined, patchTs: number | null | undefined): boolean =>
+  updatedAt != null && patchTs != null && updatedAt > 0 && updatedAt < patchTs;
+
 export interface RankedBuild {
   build: HeroBuild;
   matches: number;
