@@ -84,8 +84,12 @@ habits: deaths before 10:00, souls at 10:00 vs hero average, items always bought
 ## Build / run
 - Dev: `npm install`, `npm run dev` (web :3000) + `npm run desktop` (overlay, tauri dev).
 - Local installer: `npm run desktop:build` → `target/release/bundle/nsis/*-setup.exe`.
-- Typecheck: `npx tsc --noEmit -p packages/core`, `-p apps/web`, `-p apps/desktop`;
-  Rust: `cargo check -p deadlock-meta-desktop`, `cargo test -p deadlock-live`.
+- Before pushing, run what CI runs (`.github/workflows/ci.yml`), or it fails on main:
+  `npm run typecheck` + `npm test`, and for Rust **`cargo fmt --check`** (CI's first step, and
+  it stops the whole rust job), `cargo clippy --workspace`, `cargo check --manifest-path
+  apps/desktop/src-tauri/Cargo.toml`, `cargo test --workspace`. `cargo fmt` fixes the
+  formatting. The tauri crate needs GTK, so on Linux its clippy/check only run in CI
+  (windows-latest) — everything else runs locally.
 - Bundled site not reachable ("Server data ✗" in Status koneksi): the overlay shows why
   (`web_status` command in lib.rs → `WebNote` from `webserver::start`: port taken, server.js/node.exe
   missing, spawn blocked, or exit code + tail of `web-server.log` in the app log dir). It retries

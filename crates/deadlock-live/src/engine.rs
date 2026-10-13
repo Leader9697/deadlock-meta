@@ -452,7 +452,9 @@ async fn resolve_url(
         quota_gone = true;
         let _ = events
             .send(EngineEvent::Status {
-                message: "Kuota spectate (6/jam) sudah terpakai. Menunggu broadcast di daftar publik…".into(),
+                message:
+                    "Kuota spectate (6/jam) sudah terpakai. Menunggu broadcast di daftar publik…"
+                        .into(),
             })
             .await;
     }
