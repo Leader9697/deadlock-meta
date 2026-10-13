@@ -314,6 +314,9 @@ const pct = (x: number, d = 1) => `${(x * 100).toFixed(d)}%`;
 const delta = (x: number) => `${x >= 0 ? "+" : ""}${(x * 100).toFixed(1)}`;
 const wrCls = (x: number) => (x >= 0.53 ? "win" : x <= 0.47 ? "loss" : "");
 const k = (n: number) => `${(n / 1000).toFixed(1)}k`;
+/** Souls exactly as the shop writes them. Item prices, refunds and souls in hand use this:
+ *  k() rounds to 100 souls, which showed a 1.250 item as "1.3k". */
+const souls = (n: number) => Math.round(n).toLocaleString("id-ID");
 const SLOT_CLS = { weapon: "w", vitality: "v", spirit: "s" } as const;
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
@@ -1032,12 +1035,12 @@ function coachStrip(r: LiveResp, hud: boolean, extra = "", shopping = false): st
   parts.push(`<span class="seg" title="Selisih souls tim"><b class="${r.netWorthLead >= 0 ? "win" : "loss"}">${r.netWorthLead >= 0 ? "+" : "−"}${k(Math.abs(r.netWorthLead))}</b><span class="muted">souls</span></span>`);
   const next = r.buildPath[0];
   const m = me();
-  const souls = hud ? HUD.souls : m ? soulsNow(m) : null;
-  if (shopping && souls != null) {
+  const have = hud ? HUD.souls : m ? soulsNow(m) : null;
+  if (shopping && have != null) {
     // while dead the list is already in the text: show what there is to spend
-    parts.push(`<span class="seg grow-seg">${ic("coins", "xs muted")}<b>${k(souls)}</b><span class="muted">souls di tangan</span></span>`);
+    parts.push(`<span class="seg grow-seg">${ic("coins", "xs muted")}<b>${souls(have)}</b><span class="muted">souls di tangan</span></span>`);
   } else if (next) {
-    const left = souls != null ? Math.max(0, next.cost - souls) : next.missing;
+    const left = have != null ? Math.max(0, next.cost - have) : next.missing;
     const ready = left <= 0;
     parts.push(
       `<span class="seg grow-seg" title="Beli berikutnya (Ctrl+Shift+B = sudah beli)">${ic("bag", "xs muted")}<span class="ell">${esc(next.name)}</span>${
@@ -1074,12 +1077,12 @@ function coachCard(r: LiveResp, hud = false) {
   const deadLeft = m?.dead ? (m.respawnInS ?? 0) - lag : 0;
   if (m?.dead && deadLeft > 3) {
     const back = formatClock(r.gameTimeS + (m.respawnInS ?? 0));
-    const souls = hud ? (HUD.souls ?? 0) : soulsNow(m);
-    let left = souls;
+    const have = hud ? (HUD.souls ?? 0) : soulsNow(m);
+    let left = have;
     const shop: string[] = [];
     for (const st of r.buildPath) {
       if (st.cost <= left) {
-        shop.push(`${st.name} ${k(st.cost)}`);
+        shop.push(`${st.name} ${souls(st.cost)}`);
         left -= st.cost;
       }
       if (shop.length >= 3) break;
@@ -1089,7 +1092,7 @@ function coachCard(r: LiveResp, hud = false) {
       ? `Belanja sekarang: ${shop.join(" · ")}${why ? `. ${why.title.replace(/^Kenapa mati:\s*/i, "Penyebab: ")}` : ""}`
       : why
         ? `${why.title.replace(/^Kenapa mati:\s*/i, "Penyebab: ")}. ${why.detail}`
-        : `Souls ${k(souls)}: belum cukup untuk item berikutnya, simpan dan farm setelah hidup.`;
+        : `Souls ${souls(have)}: belum cukup untuk item berikutnya, simpan dan farm setelah hidup.`;
     return shell("death", "respawn", "Mati", `Hidup lagi ${back}`, detail, "", "", true);
   }
 
@@ -1186,12 +1189,12 @@ function buildPathCard(r: LiveResp) {
   const ad = r.adaptive;
   const head =
     ad?.source === "core+flex"
-      ? `<small>${PHASE_NAME[ad.phase]} · flex ${ad.flexUsed}/${ad.flexMax} · ${k(HUD_SOULS ?? soulsNow(m))} souls</small>`
+      ? `<small>${PHASE_NAME[ad.phase]} · flex ${ad.flexUsed}/${ad.flexMax} · ${souls(HUD_SOULS ?? soulsNow(m))} souls</small>`
       : r.build
         ? `<small>${esc(r.build.name)} · ${pct(r.build.winrate)} <button class="copy" data-copy="${r.build.id}">ID ${r.build.id}</button></small>`
-        : `<small>${k(HUD_SOULS ?? soulsNow(m))} souls di tangan</small>`;
+        : `<small>${souls(HUD_SOULS ?? soulsNow(m))} souls di tangan</small>`;
   const sell = r.sell
-    ? `<div class="small" style="margin-bottom:6px;padding:5px 7px;border-radius:6px;background:rgb(226 103 92 / .12)">${ic("swap")} <b>Jual ${esc(r.sell.sellName)}</b> (+${k(r.sell.refund)}) → <b>${esc(r.sell.forName)}</b><div class="muted">${esc(r.sell.reason)}</div></div>`
+    ? `<div class="small" style="margin-bottom:6px;padding:5px 7px;border-radius:6px;background:rgb(226 103 92 / .12)">${ic("swap")} <b>Jual ${esc(r.sell.sellName)}</b> (+${souls(r.sell.refund)}) → <b>${esc(r.sell.forName)}</b><div class="muted">${esc(r.sell.reason)}</div></div>`
     : "";
   const sw = r.switched ? `<div class="small" style="margin-bottom:6px">↺ <b>Target diganti:</b> <span class="muted">${esc(r.switched)}</span></div>` : "";
   return `<section class="card">
@@ -1209,12 +1212,12 @@ function buildPathCard(r: LiveResp) {
                 return `<div class="step ${s.affordable ? "ok" : ""}">
           <span class="num-badge">${i + 1}</span>
           <div class="grow2"><div class="row"><span class="name ${s.slot ? SLOT_CLS[s.slot as keyof typeof SLOT_CLS] ?? "" : ""}">${esc(s.name)}</span>
-            <span class="small">${k(s.cost)}</span>
+            <span class="small">${souls(s.cost)}</span>
             ${s.kind === "flex" ? `<span class="tag flex">FLEX</span>` : ""}
             ${r.sell && r.sell.forId === s.itemId ? `<span class="tag loss">JUAL DULU</span>` : s.affordable ? `<span class="tag ok">BISA BELI</span>` : `<span class="small muted">kurang ${k(s.missing)}</span>`}
             <button class="copy" data-bought="${s.itemId}" title="Tandai sudah dibeli (broadcast telat ±${lagSeconds()} dtk)">✓ Sudah beli</button></div>
           ${s.locked && S.commit ? `<div class="small" style="color:var(--brass)">${ic("lock")} target sejak ${formatClock(S.commit.sinceS)}: tidak diganti sampai terbeli</div>` : ""}
-          ${s.upgradeFrom && s.fullCost ? `<div class="small win">${ic("upgrade")} bayar ${k(s.cost)} saja (harga ${k(s.fullCost)}, komponen dipotong)</div>` : ""}
+          ${s.upgradeFrom && s.fullCost ? `<div class="small win">${ic("upgrade")} bayar ${souls(s.cost)} saja (harga ${souls(s.fullCost)}, komponen dipotong)</div>` : ""}
           <div class="small muted">${esc(s.reason)}</div>${imbueLines(r.imbue?.find((x) => x.itemId === s.itemId), i === 0 ? 3 : 1)}${i === 0 || s.kind === "flex" ? playLines(r.playbook?.next.find((p) => p.itemId === s.itemId), 2) : ""}</div>
         </div>`;
               },
@@ -2731,12 +2734,12 @@ function teamLine() {
 function beliHud(r: LiveResp) {
   const m = me()!;
   const steps = r.buildPath.slice(0, HUD.focus ? 2 : 3);
-  const sell = r.sell ? `<div class="hud-line loss">${ic("swap")} Jual <b>${esc(r.sell.sellName)}</b> (+${k(r.sell.refund)}) → ${esc(r.sell.forName)}</div>` : "";
+  const sell = r.sell ? `<div class="hud-line loss">${ic("swap")} Jual <b>${esc(r.sell.sellName)}</b> (+${souls(r.sell.refund)}) → ${esc(r.sell.forName)}</div>` : "";
   const im = steps[0] ? r.imbue?.find((x) => x.itemId === steps[0].itemId) : undefined;
-  return `<section class="card hud beli"><h3>Beli <small>${r.adaptive ? `${PHASE_NAME[r.adaptive.phase]} · ` : ""}${k(HUD_SOULS ?? soulsNow(m))} souls</small></h3>${sell}${steps
+  return `<section class="card hud beli"><h3>Beli <small>${r.adaptive ? `${PHASE_NAME[r.adaptive.phase]} · ` : ""}${souls(HUD_SOULS ?? soulsNow(m))} souls</small></h3>${sell}${steps
     .map(
-      (s2, i) => `<div class="step ${s2.affordable ? (i === 0 ? "ready-buy ok" : "ok") : ""}"><span class="num-badge">${i + 1}</span><div class="grow2"><div class="row"><span class="name ${SLOT_CLS[s2.slot as keyof typeof SLOT_CLS] ?? ""}">${esc(s2.name)}</span><span class="small">${k(s2.cost)}</span>${s2.kind === "flex" ? `<span class="tag flex">FLEX</span>` : ""}${
-        r.sell && r.sell.forId === s2.itemId ? `<span class="tag loss">JUAL DULU</span>` : s2.affordable ? `<span class="tag ok" style="font-weight:bold">BISA BELI</span>` : `<span class="small muted">−${k(s2.missing)}</span>`
+      (s2, i) => `<div class="step ${s2.affordable ? (i === 0 ? "ready-buy ok" : "ok") : ""}"><span class="num-badge">${i + 1}</span><div class="grow2"><div class="row"><span class="name ${SLOT_CLS[s2.slot as keyof typeof SLOT_CLS] ?? ""}">${esc(s2.name)}</span><span class="small">${souls(s2.cost)}</span>${s2.kind === "flex" ? `<span class="tag flex">FLEX</span>` : ""}${
+        r.sell && r.sell.forId === s2.itemId ? `<span class="tag loss">JUAL DULU</span>` : s2.affordable ? `<span class="tag ok" style="font-weight:bold">BISA BELI</span>` : `<span class="small muted">−${souls(s2.missing)}</span>`
       }</div>${i === 0 ? `<div class="small muted clamp1">${esc(s2.reason)}</div>${im ? `<div class="small" style="color:var(--spirit)">${ic("sparkles")} Imbue → <b>${esc(im.target.name)}</b></div>` : ""}` : ""}</div></div>`,
     )
     .join("")}

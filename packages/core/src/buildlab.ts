@@ -16,6 +16,8 @@
  *   for 38/40 heroes (3-round-burst weapons are within ~3%).
  */
 
+import { isPriced, itemCost } from "./prices";
+
 export interface RawProp {
   value?: string | number | boolean | null;
   provided_property_type?: string | null;
@@ -234,7 +236,7 @@ export function computeStats(hero: LabHero, weapon: LabItem | undefined, build: 
   const spiritRes: number[] = [];
 
   for (const it of build) {
-    if (it.item_slot_type && it.cost && it.cost < 9999) spent[it.item_slot_type] += it.cost;
+    if (it.item_slot_type) spent[it.item_slot_type] += itemCost(it);
     for (const [t, v] of itemInnate(it)) {
       totals.set(t, (totals.get(t) ?? 0) + v);
       if (t === "MODIFIER_VALUE_BULLET_ARMOR_DAMAGE_RESIST") bulletRes.push(v);
@@ -349,7 +351,7 @@ export function marginalGains(
   const base = computeStats(hero, weapon, build, souls);
   const owned = new Set(build.map((b) => b.id));
   return candidates
-    .filter((c) => !owned.has(c.id) && c.shopable && !c.disabled && (c.cost ?? 0) > 0 && (c.cost ?? 0) < 9999)
+    .filter((c) => !owned.has(c.id) && c.shopable && !c.disabled && isPriced(c))
     .map((c) => {
       // net worth does not change when souls are spent, so level stays the same
       const s = computeStats(hero, weapon, [...build, c], souls);
@@ -358,7 +360,7 @@ export function marginalGains(
       const ehpB = rel(s.ehpBullet, base.ehpBullet);
       const ehpS = rel(s.ehpSpirit, base.ehpSpirit);
       const defence = bulletShare * ehpB + (1 - bulletShare) * ehpS;
-      const k = (c.cost ?? 1) / 1000;
+      const k = (itemCost(c) || 1) / 1000;
       return {
         itemId: c.id,
         dps,

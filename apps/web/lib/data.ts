@@ -12,6 +12,9 @@ import {
   getHeroPhases,
   getTopBuilds,
   isLiveHero,
+  withItemCost,
+  configureTierPrices,
+  tierPricesFromEnv,
   parsePatch,
   type ParsedPatch,
   scoutPlayers,
@@ -23,6 +26,10 @@ import {
 } from "@deadlock/core";
 import { diskFallback } from "./disk-cache";
 import { AUTO, SINCE_PATCH, type Filters } from "./filters";
+
+// A balance patch can change tier prices before the asset dump catches up: DLM_TIER_PRICES
+// (e.g. "800,1600,3200,6400") overrides the built-in table without a release.
+configureTierPrices(tierPricesFromEnv(process.env.DLM_TIER_PRICES));
 
 export const api = createClient({
   baseUrl: process.env.DEADLOCK_API_BASE || undefined,
@@ -150,7 +157,18 @@ export const getLatestPatchTs = cache(async (): Promise<number | null> => {
 
 export const getHeroMap = cache(async () => new Map((await getHeroes()).map((h) => [h.id, h])));
 
-export const getItems = cache(async (): Promise<Item[]> => memo("items", ASSET_TTL, () => api.items(ASSETS)));
+/**
+ * Item assets with shop prices corrected (see `itemCost`): the asset dump's `cost` lags
+ * balance patches, so the tier table wins. Corrected once here, where the list is loaded,
+ * so the website, `/api/live` and the overlay all quote the same price. The Build Lab
+ * shares this memo entry (`rawItems` in lib/lab.ts), so it gets the same objects.
+ */
+const itemAssets = () => memo("items", ASSET_TTL, async () => (await api.items(ASSETS)).map(withItemCost));
+
+export const getItems = cache(async (): Promise<Item[]> => itemAssets());
+
+/** Same objects as `getItems()`, kept untrimmed for the Build Lab. */
+export const getItemAssets = cache(() => itemAssets());
 
 export const getItemMap = cache(async () => new Map((await getItems()).map((i) => [i.id, i])));
 

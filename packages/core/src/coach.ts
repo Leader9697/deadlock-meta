@@ -14,6 +14,7 @@ import { formatClock } from "./stats";
 import { detectMode, type LivePlayer, type LiveState, type LiveSummary } from "./live";
 import type { HeroPhases, PhaseKey } from "./phases";
 import type { HeroBuild, Item } from "./types";
+import { itemCost, souls } from "./prices";
 
 export type TipKind = "push" | "retreat" | "objective" | "buy" | "tempo" | "threat" | "momentum" | "farm" | "death";
 
@@ -150,7 +151,7 @@ export function buildPath(input: CoachInput, limit = 5): BuildStep[] {
     const it = items.get(itemId);
     if (!it || it.type !== "upgrade" || !it.shopable || owned.has(itemId) || seen.has(itemId) || (it.item_tier ?? 0) < floor) return;
     seen.add(itemId);
-    const cost = it.cost ?? 0;
+    const cost = itemCost(it);
     const c = counterById.get(itemId);
     const top = c?.perEnemy[0];
     const reason =
@@ -404,7 +405,7 @@ export function coach(input: CoachInput): CoachOutput {
       // dead = at the shop anyway → top; alive it must not drown fight/plan calls
       priority: me.dead ? 90 : unspent >= 3000 ? 62 : 45,
       title: me.dead ? `Kamu mati: belanja sekarang` : `${k(unspent)} souls nganggur`,
-      detail: `Beli ${next.name} (${k(next.cost)}). ${next.reason}.`,
+      detail: `Beli ${next.name} (${souls(next.cost)}). ${next.reason}.`,
     });
   }
 

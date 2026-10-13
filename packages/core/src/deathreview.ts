@@ -8,6 +8,7 @@
 import { itemInnate, type LabItem } from "./buildlab";
 import type { LivePlayer } from "./live";
 import { features, type Feat } from "./playbook";
+import { isPriced, itemCost } from "./prices";
 
 export interface DeathDamage {
   attackerHeroId: number;
@@ -112,8 +113,8 @@ function sourceKind(it: LabItem | undefined, heroId: number): DamageSource["kind
 /** Shop items that answer a need, cheapest tier first (names only, for advice). */
 function shopFor(lab: Map<number, LabItem>, pick: (it: LabItem) => boolean, max = 2): string[] {
   return [...lab.values()]
-    .filter((it) => it.type === "upgrade" && it.shopable && !it.disabled && (it.cost ?? 0) > 0 && pick(it))
-    .sort((a, b) => (a.item_tier ?? 0) - (b.item_tier ?? 0) || (a.cost ?? 0) - (b.cost ?? 0))
+    .filter((it) => it.type === "upgrade" && it.shopable && !it.disabled && isPriced(it) && pick(it))
+    .sort((a, b) => (a.item_tier ?? 0) - (b.item_tier ?? 0) || itemCost(a) - itemCost(b))
     .slice(0, max)
     .map((it) => it.name);
 }

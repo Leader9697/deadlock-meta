@@ -76,6 +76,10 @@ pub async fn run(
     let mut tail: Option<LogTail> = None;
     let mut lobby: BTreeSet<u32> = BTreeSet::new();
     let mut live: Option<Live> = None;
+    // Matches that really finished (game-over row, or the broadcast ran out). A MatchEnd
+    // from console.log is deliberately NOT recorded here: those patterns are unverified, so
+    // a wrong one must cost at most a reconnect, never the rest of the match.
+    let mut finished: BTreeSet<u64> = BTreeSet::new();
     let emit_every = Duration::from_millis(cfg.live.emit_every_ms);
 
     if my_account == 0 {
@@ -206,11 +210,24 @@ pub async fn run(
                 }
             }
 
-            // Watch-tab fallback: only helps for top-200 matches, but costs one cheap call a minute.
-            _ = fallback_tick.tick(), if running && live.is_none() && my_account > 0 => {
-                if let Ok(Some(id)) = api.active_match_for(my_account).await {
-                    let _ = events.send(EngineEvent::MatchDetected { match_id: id, source: "watch-tab".into() }).await;
+            // Nothing is streaming but the game is up: the match id was logged once, minutes
+            // ago, so re-read the log before falling back to the (top-200 only) watch tab.
+            // This is what brings the HUD back after a stream dropped mid-match.
+            _ = fallback_tick.tick(), if running && live.is_none() => {
+                let relog = log_path.as_ref().zip(matchers.as_ref()).and_then(|(p, m)| {
+                    let content = std::fs::read_to_string(p).ok()?;
+                    let (mid, me) = backscan(&content, m, 90);
+                    if let Some(a) = me { my_account = a; }
+                    mid.filter(|id| !finished.contains(id))
+                });
+                if let Some(id) = relog {
+                    let _ = events.send(EngineEvent::MatchDetected { match_id: id, source: "console.log (sambung ulang)".into() }).await;
                     live = Some(start_live(&api, &cfg, id, my_account, events.clone()));
+                } else if my_account > 0 {
+                    if let Ok(Some(id)) = api.active_match_for(my_account).await {
+                        let _ = events.send(EngineEvent::MatchDetected { match_id: id, source: "watch-tab".into() }).await;
+                        live = Some(start_live(&api, &cfg, id, my_account, events.clone()));
+                    }
                 }
             }
 
@@ -218,6 +235,7 @@ pub async fn run(
             _ = end_tick.tick(), if live.as_ref().and_then(|l| l.over_at).is_some_and(|t| t.elapsed() >= GAME_OVER_GRACE) => {
                 if let Some(l) = live.take() {
                     l.task.abort();
+                    finished.insert(l.match_id);
                     if l.dirty && !l.agg.state.players.is_empty() {
                         let _ = events.send(EngineEvent::LiveState(l.agg.state.clone())).await;
                     }
@@ -250,6 +268,7 @@ pub async fn run(
                     }
                     None => {
                         let l = live.take().unwrap();
+                        finished.insert(l.match_id);
                         if l.dirty && !l.agg.state.players.is_empty() {
                             let _ = events.send(EngineEvent::LiveState(l.agg.state.clone())).await;
                         }
@@ -307,6 +326,24 @@ fn unix_now() -> u64 {
 
 fn quota_file(dir: Option<&Path>) -> Option<PathBuf> {
     dir.map(|d| d.join("spectate-calls.txt"))
+}
+
+/// Spectate calls made in the last hour, without recording a new one.
+fn spectate_quota_left(state_dir: Option<&Path>) -> usize {
+    let mut calls = match SPECTATE_CALLS.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    let now = unix_now();
+    if let Some(text) = quota_file(state_dir).and_then(|f| std::fs::read_to_string(f).ok()) {
+        for t in text.lines().filter_map(|l| l.trim().parse::<u64>().ok()) {
+            if !calls.contains(&t) {
+                calls.push(t);
+            }
+        }
+    }
+    calls.retain(|&t| now.saturating_sub(t) < 3600 && t <= now + 60);
+    SPECTATE_PER_HOUR.saturating_sub(calls.len())
 }
 
 /// Records one spectate call; returns the calls in the last hour (this one included) and,
@@ -409,6 +446,16 @@ async fn resolve_url(
     let mut spectate_tries = 0u32;
     let mut next_spectate = Instant::now(); // first spectate right away
     let mut quota_gone = false;
+    // `spectate_tries` is per task and a reconnect starts a new one; the hourly quota is
+    // shared, so never spend a call that is not there.
+    if spectate_quota_left(state_dir) == 0 {
+        quota_gone = true;
+        let _ = events
+            .send(EngineEvent::Status {
+                message: "Kuota spectate (6/jam) sudah terpakai. Menunggu broadcast di daftar publik…".into(),
+            })
+            .await;
+    }
     while started.elapsed() < Duration::from_secs(90 * 60) {
         if let Ok(Some(u)) = api.listed_broadcast_url(match_id).await {
             return Some(u);

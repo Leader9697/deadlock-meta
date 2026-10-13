@@ -247,6 +247,43 @@ mod tests {
     use super::*;
     use std::io::Write;
 
+    /// A disconnect is not the end of a match. These lines show up on a mid-match reconnect
+    /// and when leaving the hero-select server; treating them as MatchEnd killed the live
+    /// stream (and the HUD) for the rest of the match.
+    #[test]
+    fn disconnect_lines_are_not_match_end() {
+        let m = Matchers::new(&LogPatterns::default()).unwrap();
+        let mut ev = Vec::new();
+        for line in [
+            "10/09 00:20:01 Disconnecting from server: NETWORK_DISCONNECT_LOOPSHUTDOWN",
+            "10/09 00:20:02 Host_Disconnect",
+            "10/09 00:20:03 [SteamNetSockets] Closing connection to server",
+        ] {
+            m.scan_line(line, &mut ev);
+        }
+        assert!(
+            !ev.iter().any(|e| matches!(e, LogEvent::MatchEnd)),
+            "a disconnect must not end the match: {ev:?}"
+        );
+    }
+
+    #[test]
+    fn post_game_lines_are_match_end() {
+        let m = Matchers::new(&LogPatterns::default()).unwrap();
+        for line in [
+            "10/09 00:40:00 Entering game state: 6 (PostGame)",
+            "10/09 00:40:00 ChangeGameState: POST_GAME (6)",
+            "10/09 00:40:00 CitadelGameRules: Match ended",
+        ] {
+            let mut ev = Vec::new();
+            m.scan_line(line, &mut ev);
+            assert!(
+                ev.iter().any(|e| matches!(e, LogEvent::MatchEnd)),
+                "expected MatchEnd for {line:?}, got {ev:?}"
+            );
+        }
+    }
+
     /// Lines copied verbatim from a real console.log (build 6763, Street Brawl).
     const REAL: &str = "10/09 00:15:26 [SteamNetSockets] AuthStatus (steamid:76561198802383751):  Attempting  (Requesting cert)
 10/09 00:15:31 [SteamNetSockets] AuthStatus (steamid:76561198802383751):  OK  (OK)

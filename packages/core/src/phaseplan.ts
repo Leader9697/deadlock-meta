@@ -2,6 +2,7 @@ import type { DeadlockClient, FetchInit, Query } from "./api";
 import { scoreCounterItems, type CounterItem } from "./counter";
 import { winrate } from "./stats";
 import type { Item, ItemFlowStats, ItemSlotType, ItemStats } from "./types";
+import { itemCost } from "./prices";
 
 /**
  * Game phases used to turn "a bag of good items" into an ordered buy plan.
@@ -203,7 +204,7 @@ export function scorePhaseCounter(data: PhaseCounterRows, allItems: Item[], enem
       p.key,
       common.map((c) => {
         const it = shop.get(c.itemId)!;
-        return { itemId: c.itemId, score: c.score, cost: it.cost ?? 0, tier: it.item_tier ?? 0, slot: it.item_slot_type ?? null, matches: c.baselineMatches };
+        return { itemId: c.itemId, score: c.score, cost: itemCost(it), tier: it.item_tier ?? 0, slot: it.item_slot_type ?? null, matches: c.baselineMatches };
       }),
     );
     for (const c of common) if (c.score < -0.01) avoid.push({ ...c, phase: p.key });
@@ -321,7 +322,7 @@ export function flowPhasePlan(flow: ItemFlowStats, phaseSeconds: number, allItem
     if (a.matches < 30 || fi.pickShare < 0.03) continue;
     const score = 0.06 * Math.sqrt(fi.pickShare) + (fi.adjustedWr - baselineWr) * (a.matches / (a.matches + 200));
     const list = candidates.get(ph) ?? [];
-    list.push({ itemId, score, cost: it.cost ?? 0, tier: it.item_tier ?? 0, slot: it.item_slot_type ?? null, matches: a.matches });
+    list.push({ itemId, score, cost: itemCost(it), tier: it.item_tier ?? 0, slot: it.item_slot_type ?? null, matches: a.matches });
     candidates.set(ph, list);
   }
 

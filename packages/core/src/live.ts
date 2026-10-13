@@ -1,6 +1,7 @@
 import type { CounterItem, CounterResult } from "./counter";
 import type { DeathRecord } from "./deathreview";
 import type { Item, ItemSlotType } from "./types";
+import { itemCost } from "./prices";
 
 /** Snapshot pushed by the desktop app's live engine (Rust) every few seconds. */
 export interface LivePlayer {
@@ -142,7 +143,7 @@ export function nextBuys(
       .map((c) => ({ c, it: items.get(c.itemId) }))
       .filter((x): x is { c: CounterItem; it: Item } => !!x.it && (x.it.item_tier ?? 1) <= tierCap && (x.it.item_tier ?? 1) >= minTier)
       .slice(0, limit)
-      .map(({ c, it }) => ({ item: it, counter: c, affordable: (it.cost ?? 0) <= budget }));
+      .map(({ c, it }) => ({ item: it, counter: c, affordable: itemCost(it) <= budget }));
 
   return {
     all: pick(result.items),

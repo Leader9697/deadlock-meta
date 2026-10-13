@@ -1,13 +1,14 @@
 import "server-only";
 import { cache } from "react";
 import type { LabHero, LabItem, RawProp } from "@deadlock/core";
-import { api, getLiveHeroIds, memo } from "./data";
+import { api, getItemAssets, getLiveHeroIds, memo } from "./data";
 
 /** Raw assets with every field (the typed client trims nothing at runtime). */
 const TTL = 3600_000;
 const rawHeroes = cache(() => memo("raw-heroes", TTL, async () => (await api.get<unknown[]>("/v1/assets/heroes", { only_active: true }, { cache: "no-store" })) as LabHero[] & Record<string, unknown>[]));
-// same URL as getItems(): share the download
-const rawItems = cache(() => memo("items", TTL, () => api.items({ cache: "no-store" })) as unknown as Promise<LabItem[]>);
+// One loader for the item assets (getItems() in lib/data.ts): one download, and one set of
+// shop prices — correcting them in two places would let the Lab and the HUD disagree.
+const rawItems = cache(() => getItemAssets() as unknown as Promise<LabItem[]>);
 
 const KEEP_START = ["max_health", "base_health_regen", "max_move_speed", "sprint_speed", "reload_speed", "stamina", "bullet_armor_damage_reduction", "tech_armor_damage_reduction", "light_melee_damage", "heavy_melee_damage"];
 

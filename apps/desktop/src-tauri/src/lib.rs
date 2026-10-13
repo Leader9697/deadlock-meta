@@ -484,10 +484,17 @@ pub fn run() {
                             *handle.state::<AppState>().over.lock().unwrap() = false;
                             widgets_visible(&handle, true);
                         }
-                        EngineEvent::LiveState(_) | EngineEvent::LiveConnected { .. } => {
-                            if !*handle.state::<AppState>().over.lock().unwrap() {
-                                widgets_visible(&handle, true);
-                            }
+                        // A live stream delivering rows for a match with no winner means the
+                        // match is still going: clear "over" so a wrong end (an unverified
+                        // console.log pattern, a dropped stream) cannot keep the HUD hidden
+                        // for the rest of the match.
+                        EngineEvent::LiveConnected { .. } => {
+                            *handle.state::<AppState>().over.lock().unwrap() = false;
+                            widgets_visible(&handle, true);
+                        }
+                        EngineEvent::LiveState(st) if st.winning_team.is_none() => {
+                            *handle.state::<AppState>().over.lock().unwrap() = false;
+                            widgets_visible(&handle, true);
                         }
                         EngineEvent::GameStopped => widgets_visible(&handle, false),
                         _ => {}

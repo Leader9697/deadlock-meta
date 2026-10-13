@@ -17,6 +17,7 @@ import { itemInnate, itemTags, type ItemTag, type LabItem } from "./buildlab";
 import type { CounterItem } from "./counter";
 import type { LivePlayer } from "./live";
 import { GAME_PHASES, type FlowPhasePlan, type GamePhase } from "./phaseplan";
+import { itemCost, souls as soulsFmt } from "./prices";
 import type { HeroType, Item } from "./types";
 
 export const phaseAt = (gameTimeS: number): GamePhase => GAME_PHASES.find((p) => p.toS == null || gameTimeS < p.toS)!.key;
@@ -107,7 +108,7 @@ export function profileEnemies(
     for (const id of p.itemIds) {
       const it = lab.get(id);
       if (!it || it.type !== "upgrade") continue;
-      const cost = it.cost ?? 0;
+      const cost = itemCost(it);
       if (it.item_slot_type) souls[it.item_slot_type] += cost;
       const tags = itemTags(it);
       for (const t of tags) tagSouls[t] = (tagSouls[t] ?? 0) + cost;
@@ -281,7 +282,7 @@ function pickInTiers(need: Need, input: AdaptiveInput, exclude: Set<number>, flo
   let best: { item: LabItem; score: number; why: string } | null = null;
   for (const it of input.lab.values()) {
     if (it.type !== "upgrade" || !it.shopable || it.disabled || exclude.has(it.id)) continue;
-    if ((it.item_tier ?? 9) > cap || (it.item_tier ?? 0) < floor || !(it.cost ?? 0)) continue;
+    if ((it.item_tier ?? 9) > cap || (it.item_tier ?? 0) < floor || !itemCost(it)) continue;
     const tags = itemTags(it);
     if (!want.some((t) => tags.has(t))) continue;
     // resist needs: the resist must be the point of the item, not a 5% side stat
@@ -339,7 +340,7 @@ export function adaptivePath(input: AdaptiveInput): { steps: AdaptiveStep[]; pha
       const reason = fi
         ? `Core ${p.phase.label} · dibeli ${(fi.pickShare * 100).toFixed(0)}% pemain · WR ${pts(fi.adjustedWr - core!.baselineWr)}`
         : "Core";
-      coreQueue.push({ itemId: it.id, name: it.name, cost: it.cost ?? 0, tier: it.item_tier ?? 0, slot: it.item_slot_type ?? undefined, kind: "core", phase: p.phase.key, missing: 0, affordable: false, reason });
+      coreQueue.push({ itemId: it.id, name: it.name, cost: itemCost(it), tier: it.item_tier ?? 0, slot: it.item_slot_type ?? undefined, kind: "core", phase: p.phase.key, missing: 0, affordable: false, reason });
     }
   }
 
@@ -360,7 +361,7 @@ export function adaptivePath(input: AdaptiveInput): { steps: AdaptiveStep[]; pha
       step: {
         itemId: it.id,
         name: it.name,
-        cost: it.cost ?? 0,
+        cost: itemCost(it),
         tier: it.item_tier ?? 0,
         slot: it.item_slot_type ?? undefined,
         kind: "flex",
@@ -390,7 +391,7 @@ export function adaptivePath(input: AdaptiveInput): { steps: AdaptiveStep[]; pha
       steps.push({
         itemId: it.id,
         name: it.name,
-        cost: it.cost ?? 0,
+        cost: itemCost(it),
         tier: it.item_tier ?? 0,
         slot: it.item_slot_type ?? undefined,
         kind: "core",
@@ -410,7 +411,7 @@ export function adaptivePath(input: AdaptiveInput): { steps: AdaptiveStep[]; pha
     let cs = steps.find((x) => x.itemId === c.itemId);
     const it = lab.get(c.itemId);
     if (!cs && it) {
-      cs = { itemId: it.id, name: it.name, cost: it.cost ?? 0, tier: it.item_tier ?? 0, slot: it.item_slot_type ?? undefined, kind: "core", phase, missing: 0, affordable: false, reason: "Target sebelumnya" };
+      cs = { itemId: it.id, name: it.name, cost: itemCost(it), tier: it.item_tier ?? 0, slot: it.item_slot_type ?? undefined, kind: "core", phase, missing: 0, affordable: false, reason: "Target sebelumnya" };
     }
     const needGone = cs?.needKind ? input.needs.some((n) => n.kind === cs!.needKind && n.satisfied) || !input.needs.some((n) => n.kind === cs!.needKind) : false;
     const urgentFlex = flex.find((f) => f.step.itemId !== c.itemId && f.urgency >= 0.8);
@@ -428,17 +429,27 @@ export function adaptivePath(input: AdaptiveInput): { steps: AdaptiveStep[]; pha
     }
   }
 
-  // ---- upgrades: an owned component is consumed and its price deducted
+  // ---- upgrades: owned components are consumed and their price deducted.
+  // An item can list several components and more than one may be owned, so all of them
+  // count. The discount never reaches the full price: a step showing "0" would read as a
+  // free item, and "pay the difference" is still unverified (see CLAUDE.md) — capping it
+  // keeps a wrong assumption from printing an absurd price.
   const byClass = new Map([...lab.values()].map((x) => [x.class_name, x]));
   for (const st of steps) {
     const it = lab.get(st.itemId);
-    const comp = (it?.component_items ?? []).map((cls) => byClass.get(cls)).find((x) => x && owned.has(x.id));
-    if (comp) {
-      st.fullCost = st.cost;
-      st.cost = Math.max(0, st.cost - (comp.cost ?? 0));
-      st.upgradeFrom = comp.id;
-      st.reason += ` · upgrade dari ${comp.name} (bayar selisih)`;
-    }
+    const comps = (it?.component_items ?? [])
+      .map((cls) => byClass.get(cls))
+      .filter((x): x is LabItem => !!x && owned.has(x.id));
+    if (!comps.length || st.cost <= 0) continue;
+    const discount = Math.min(
+      comps.reduce((t, c) => t + itemCost(c), 0),
+      st.cost - 1,
+    );
+    if (discount <= 0) continue;
+    st.fullCost = st.cost;
+    st.cost = st.cost - discount;
+    st.upgradeFrom = comps[0].id;
+    st.reason += ` · upgrade dari ${comps.map((c) => c.name).join(" + ")} (bayar selisih)`;
   }
 
   // souls are spent in order
@@ -540,10 +551,10 @@ export function sellAdvice(input: {
     .sort((a, b) => a.keep - b.keep);
   const pick = scored[0];
   if (!pick) return null;
-  const refund = Math.round((pick.it.cost ?? 0) * 0.5);
+  const refund = Math.round(itemCost(pick.it) * 0.5);
   const why = [
     pick.isCore ? "core, tapi paling lemah di antara pilihan" : "bukan core build",
-    `T${pick.it.item_tier} (${Math.round((pick.it.cost ?? 0) / 100) / 10}k)`,
+    `T${pick.it.item_tier} (${soulsFmt(itemCost(pick.it))})`,
     pick.d < -0.005 ? `WR di hero kamu ${(pick.d * 100).toFixed(1)}%` : "",
     pick.answers.length ? "" : "tidak menjawab ancaman lawan saat ini",
   ].filter(Boolean);

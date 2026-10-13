@@ -140,13 +140,15 @@ impl Default for LogPatterns {
                 r#"\[Server\] SV:\s+"[^"]*<\[U:1:(?P<id>\d+)\]><>"\s+STEAM USERID validated"#
                     .into(),
             ],
+            // Only lines that mean POST-GAME. A plain disconnect must never be in here:
+            // `NETWORK_DISCONNECT_` and `Host_Disconnect` also fire on a mid-match reconnect
+            // and when leaving the hero-select server, and a false MatchEnd killed the live
+            // stream (and with it the HUD) for the rest of the match.
             match_end: vec![
-                r"Disconnecting from server: NETWORK_DISCONNECT_".into(),
                 r"\bEntering game state:\s*6\b".into(),
                 r"\bChangeGameState:\s*(?:POST_GAME|GAME_STATE_POST_GAME)\b".into(),
                 r"\bCitadel(?:GameRules)?:\s*Match (?:ended|over)\b".into(),
                 r"\bMatch outcome:\s*(?:Team|winner)".into(),
-                r"\bHost_Disconnect\b".into(),
             ],
             hero_loaded: vec![
                 r#"\[Server\] Loaded hero (?P<entity>\d+)/(?P<hero>hero_\w+)"#.into(),
@@ -245,7 +247,8 @@ FROM ObjectiveMaskEvent",
 /// v9: game_mode and match_mode detection (street brawl vs normal / ranked).
 /// v10: zero-delay local console events (loaded heroes, respawns, game states).
 /// v11: expanded match_id detection regex patterns for broader game console log variations.
-pub const CONFIG_VERSION: u32 = 11;
+/// v12: match_end only on post-game lines (a disconnect is not the end of a match).
+pub const CONFIG_VERSION: u32 = 12;
 
 impl Config {
     /// Older config files keep the user's own settings but get the current built-in
@@ -312,6 +315,17 @@ sql = "SELECT m_steamID AS account_id FROM CCitadelPlayerController"
         assert_eq!(c.live.queries.len(), 8);
         let (_, again) = c.migrate();
         assert!(!again);
+    }
+
+    #[test]
+    fn match_end_has_no_disconnect_patterns() {
+        let d = Config::default();
+        for re in &d.log.match_end {
+            assert!(
+                !re.contains("DISCONNECT") && !re.contains("Host_Disconnect"),
+                "a disconnect pattern is back in match_end: {re}"
+            );
+        }
     }
 
     #[test]

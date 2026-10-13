@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  adaptivePath,
   phaseAt,
   TIER_FLOOR,
   slotUsage,
@@ -163,11 +164,11 @@ describe("sellAdvice logic", () => {
     });
 
     expect(advice).not.toBeNull();
-    // 101 is Tier 1 (500 cost), should be sold first
+    // 101 is Tier 1, should be sold first
     expect(advice!.sellId).toBe(101);
     expect(advice!.sellName).toBe("Basic Magazine");
-    // 50% refund of 500 = 250
-    expect(advice!.refund).toBe(250);
+    // 50% refund of the real tier-1 price (800), not of the stale 500 in the asset dump
+    expect(advice!.refund).toBe(400);
     expect(advice!.forId).toBe(105);
   });
 
@@ -250,5 +251,75 @@ describe("findNeeds enemy counter detection", () => {
     const antiHeal = needs.find((n) => n.kind === "anti_heal");
     expect(antiHeal).toBeDefined();
     expect(antiHeal!.satisfied).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Prices in the build path: the shop's number, never a placeholder, never free
+// ---------------------------------------------------------------------------
+describe("adaptivePath prices", () => {
+  const item = (over: Partial<LabItem>): LabItem =>
+    ({
+      id: 1,
+      name: "Item",
+      class_name: "item_1",
+      type: "upgrade",
+      item_slot_type: "vitality",
+      item_tier: 2,
+      cost: 1250,
+      shopable: true,
+      disabled: false,
+      image: null,
+      shop_filters: null,
+      component_items: null,
+      is_active_item: false,
+      imbue: null,
+      properties: {},
+      weapon_info: null,
+      ...over,
+    }) as LabItem;
+
+  const player = (over: Partial<LivePlayer> = {}): LivePlayer =>
+    ({ accountId: 1, heroId: 1, team: 0, netWorth: 20000, souls: 20000, kills: 0, deaths: 0, assists: 0, level: 10, itemIds: [], ...over }) as LivePlayer;
+
+  const run = (lab: LabItem[], me: LivePlayer, needs: Need[] = []) =>
+    adaptivePath({
+      me,
+      gameTimeS: 700, // mid phase → tier floor 2
+      lab: new Map(lab.map((x) => [x.id, x])),
+      items: new Map(),
+      core: null,
+      phaseCounter: lab.map((x) => ({ itemId: x.id, score: 0.03, perEnemy: [], coveredEnemies: 1 }) as never),
+      heroItemDelta: () => 0.02,
+      needs,
+      heroName: (id) => `#${id}`,
+    });
+
+  it("quotes the tier price, not the stale asset cost", () => {
+    const steps = run([item({ id: 10, cost: 1250, item_tier: 2 })], player()).steps;
+    expect(steps.length).toBeGreaterThan(0);
+    expect(steps[0].cost).toBe(1600); // tier 2, not the 1250 in the asset dump
+  });
+
+  it("never offers a 9999-placeholder item", () => {
+    const steps = run(
+      [item({ id: 11, name: "Placeholder", item_tier: 0, cost: 9999 }), item({ id: 12, name: "Real", item_tier: 2, cost: 1250 })],
+      player(),
+    ).steps;
+    expect(steps.some((s) => s.itemId === 11)).toBe(false);
+    expect(steps.every((s) => s.cost > 0 && s.cost < 9999)).toBe(true);
+  });
+
+  it("deducts every owned component but never prices an item at zero", () => {
+    const comp = item({ id: 20, name: "Comp", class_name: "comp_a", item_tier: 3, cost: 3000 });
+    const comp2 = item({ id: 21, name: "Comp2", class_name: "comp_b", item_tier: 3, cost: 3000 });
+    const upgrade = item({ id: 22, name: "Upgrade", class_name: "up", item_tier: 3, cost: 3000, component_items: ["comp_a", "comp_b"] });
+    const steps = run([comp, comp2, upgrade], player({ itemIds: [20, 21] })).steps;
+    const up = steps.find((s) => s.itemId === 22);
+    if (up?.upgradeFrom) {
+      // components sum to 6400, well over the item's own 3200: still never free
+      expect(up.cost).toBeGreaterThan(0);
+      expect(up.cost).toBeLessThan(up.fullCost!);
+    }
   });
 });

@@ -28,6 +28,19 @@ uses the **HUD widgets** in game; he rarely opens the main panel. Keep the HUD c
   smoothed value sent back as `winPSmooth`. Calibration (`calibrateProb`) is applied to the raw
   server value, so the reliability table is built from the logged raw value (`LogSnapshot.winRaw`),
   never from the shown one (that would make it correct its own corrections).
+- Item prices come from the **tier table** in `prices.ts` (`itemCost`), never straight from the
+  asset dump's `cost`: that field lagged a balance patch (it said 500 for T1 while the shop
+  charged 800). Corrected once in `getItems()` (lib/data.ts), which the Build Lab shares, so web,
+  `/api/live` and the overlay quote one price. `cost` 0 or ≥ 9999 = not a shop item (`isPriced`).
+  After a price patch: `[web_env] DLM_TIER_PRICES="800,1600,3200,6400"`, no release needed.
+- Prices, refunds and souls in hand are written **exactly** (`souls()` in prices.ts and main.ts).
+  `k()` rounds to 100 souls (1.250 → "1.3k") and is only for net worth / souls lead.
+- A match **never ends because of a disconnect**: `log.match_end` holds post-game lines only
+  (`NETWORK_DISCONNECT_` / `Host_Disconnect` also fire on a reconnect and on leaving hero select,
+  and a false end hid the HUD for the rest of the match). Only a game-over row or an exhausted
+  broadcast marks a match `finished` in the engine; a console.log end is recoverable — the engine
+  re-reads the log every 10 s while the game is up and nothing is streaming, and `LiveConnected` /
+  a winner-less `LiveState` clears `over` in lib.rs so the widgets come back.
 - Match win/loss from history = `match_result === player_team` (`player_match_outcome` is not
   reliable). A log whose broadcast ended before the game-over row gets its result from the match
   history (`backfillOutcomes`, in `/api/me/summary` and `/me`); the post-match card shows "hasil
@@ -106,7 +119,10 @@ Objective mask lane mapping (now counted only on lanes players are assigned to,
 `activeLaneIndexes`), game_mode value 4 = Street Brawl, whether the live query server sends an
 `end` event, DeathReplayDataEvent presence, base slot count/refund 50%,
 lane-matchup endpoint stability, imbue target data from builds, console.log end-of-match line
-(would let the HUD hide instantly). Ask Faris for screenshots / console.log when touching these.
+(would let the HUD hide instantly), item tier prices 2–4 (T1 = 800 confirmed in the shop; 1600 /
+3200 / 6400 assume Valve's doubling — ask for a shop screenshot, or set `DLM_TIER_PRICES`),
+whether upgrading really charges only the difference (`adaptivePath` deducts owned components but
+never prices a step at 0). Ask Faris for screenshots / console.log when touching these.
 
 ## Ideas queued (Faris agreed on direction)
 1. ~~Cross-match habits summary~~ — **done (v0.3.0)**: `habits.ts` over the logs in `DLM_DATA_DIR`,
