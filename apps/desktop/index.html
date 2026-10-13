@@ -14,15 +14,15 @@
           <small id="build" data-tauri-drag-region style="opacity:.6;font-size:10px;margin-left:4px"></small>
         </div>
         <nav class="launcher-nav" id="launcherNav">
-          <button class="nav-tab on" data-launcher-tab="home"><span class="nav-icon">🏠</span> LAUNCHER</button>
-          <button class="nav-tab" data-launcher-tab="live"><span class="nav-icon">⚔️</span> LIVE COACH <span class="live-pill" id="livePill" style="display:none">LIVE</span></button>
-          <button class="nav-tab" data-launcher-tab="roster"><span class="nav-icon">👥</span> HERO ROSTER</button>
-          <button class="nav-tab" data-launcher-tab="meta"><span class="nav-icon">📊</span> META TIER</button>
-          <button class="nav-tab" data-launcher-tab="profile"><span class="nav-icon">📜</span> RIWAYAT & ME</button>
-          <button class="nav-tab" data-launcher-tab="settings"><span class="nav-icon">⚙️</span> PENGATURAN</button>
+          <button class="nav-tab on" data-launcher-tab="home" title="Beranda"><span class="nav-icon" data-icon="home"></span><span class="nav-label">Beranda</span></button>
+          <button class="nav-tab" data-launcher-tab="live" title="Live Coach"><span class="nav-icon" data-icon="swords"></span><span class="nav-label">Live Coach</span> <span class="live-pill" id="livePill" style="display:none">LIVE</span></button>
+          <button class="nav-tab" data-launcher-tab="roster" title="Hero"><span class="nav-icon" data-icon="users"></span><span class="nav-label">Hero</span></button>
+          <button class="nav-tab" data-launcher-tab="meta" title="Meta"><span class="nav-icon" data-icon="chart"></span><span class="nav-label">Meta</span></button>
+          <button class="nav-tab" data-launcher-tab="profile" title="Riwayat"><span class="nav-icon" data-icon="history"></span><span class="nav-label">Riwayat</span></button>
+          <button class="nav-tab" data-launcher-tab="settings" title="Pengaturan"><span class="nav-icon" data-icon="sliders"></span><span class="nav-label">Pengaturan</span></button>
         </nav>
         <div class="omnisearch-wrap">
-          <span class="omnisearch-icon">🔍</span>
+          <span class="omnisearch-icon" data-icon="search"></span>
           <input type="text" id="omniSearchInput" class="omnisearch-input" placeholder="Cari hero atau pemain… (Ctrl+K)" spellcheck="false" autocomplete="off" />
           <kbd class="omnisearch-kbd">Ctrl+K</kbd>
           <div id="omniDropdown" class="omnisearch-dropdown" style="display:none"></div>
@@ -30,14 +30,14 @@
         <span class="grow" data-tauri-drag-region></span>
         <div class="steam-profile-pill" id="steamProfilePill" style="display:none"></div>
         <div class="window-actions">
-          <button class="icon" id="voice" title="Suara saran taktis (klik untuk nyala/mati)">🔊</button>
-          <button class="icon" id="pin" title="Sematkan di atas (Always On Top)">📌</button>
-          <button class="icon" id="zoom" title="Ukuran teks UI">A</button>
-          <button class="icon" id="alpha" title="Transparansi latar">◐</button>
+          <button class="icon" id="voice" title="Suara saran taktis (klik untuk nyala/mati)" data-icon="volume"></button>
+          <button class="icon" id="pin" title="Sematkan di atas (Always On Top)" data-icon="pin"></button>
+          <button class="icon" id="zoom" title="Ukuran teks UI" data-icon="type"></button>
+          <button class="icon" id="alpha" title="Transparansi latar" data-icon="contrast"></button>
           <span class="mode" id="mode" title="Mode interaktif (Ctrl+Shift+F)">interaktif</span>
-          <button class="icon window-btn" id="min" title="Minimize (perkecil ke taskbar)">&#x2212;</button>
-          <button class="icon window-btn" id="max" title="Perbesar / Kembalikan">&#x25A2;</button>
-          <button class="icon window-btn close" id="hide" title="Sembunyikan ke tray (Ctrl+Shift+D untuk tampil lagi)">✕</button>
+          <button class="icon window-btn" id="min" title="Minimize (perkecil ke taskbar)" data-icon="minus"></button>
+          <button class="icon window-btn" id="max" title="Perbesar / Kembalikan" data-icon="square"></button>
+          <button class="icon window-btn close" id="hide" title="Sembunyikan ke tray (Ctrl+Shift+D untuk tampil lagi)" data-icon="x"></button>
         </div>
       </header>
       <div class="status-ticker" id="statusTicker">

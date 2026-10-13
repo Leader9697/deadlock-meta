@@ -48,8 +48,13 @@ uses the **HUD widgets** in game; he rarely opens the main panel. Keep the HUD c
 - Version label in the header comes from the app version (tauri.conf.json).
 - **Tray icon** (v0.3.2): left click shows/hides the panel, right click menu (Tampilkan panel, klik-tembus,
   atur HUD, Keluar). ✕ / Alt+F4 only hide to the tray; "Keluar" quits for real (stops the bundled site).
-- HUD Coach must never render empty (a blank transparent widget looks like it vanished): with no
-  tips it shows the calm "Farm & ikuti build" line (`coachCard` in main.ts).
+- HUD Coach (`coachCard` in main.ts, widget 460×122) = call + up to 2 lines of why + a numbers
+  strip (`coachStrip`: win % + trend, team souls lead, next item and what it still costs, "+N saran").
+  It must never render empty: no tips → the game plan ("Rencana") or "Farm & ikuti build"; while
+  I am dead → "Hidup lagi <in-game clock>" (broadcast respawn time is in-game, so exact) + what to
+  buy now with the souls in hand + the death cause.
+- No emoji in the UI: icons are line SVGs from `apps/desktop/src/icons.ts` (`ic("zap")`,
+  `data-icon` + `hydrateIcons()` for static markup). Nav labels collapse to icons below 1360 px.
 - Form controls are not re-rendered while focused (open dropdown closes at once): `isGuarded` in
   main.ts covers every text input / select / textarea automatically; `GUARDED` ids only for others.
 - CSP is on (tauri.conf.json): no inline scripts or `on*=""` handlers in rendered HTML — use

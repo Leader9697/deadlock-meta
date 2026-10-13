@@ -59,7 +59,7 @@ impl Default for Layout {
             enabled: true,
         };
         let mut widgets = BTreeMap::new();
-        widgets.insert("coach".into(), w(0.5, 0.105, Anchor::Tc, 440.0, 92.0));
+        widgets.insert("coach".into(), w(0.5, 0.105, Anchor::Tc, 460.0, 122.0));
         widgets.insert("win".into(), w(0.012, 0.25, Anchor::Tl, 300.0, 175.0));
         widgets.insert("enemies".into(), w(0.012, 0.52, Anchor::Tl, 290.0, 370.0));
         widgets.insert("buy".into(), w(0.988, 0.30, Anchor::Tr, 300.0, 330.0));
@@ -89,9 +89,10 @@ pub fn load(path: &Path) -> Layout {
     }
     // the coach widget used to be 520×200 and covered the fight: move old default sizes to the compact one
     if let Some(c) = l.widgets.get_mut("coach") {
-        if c.w == 520.0 && c.h == 200.0 {
-            c.w = 440.0;
-            c.h = 92.0;
+        if (c.w == 520.0 && c.h == 200.0) || (c.w == 440.0 && c.h == 92.0) {
+            // v0.3.27: the coach gained a numbers strip and a second line of why
+            c.w = 460.0;
+            c.h = 122.0;
         }
     }
     // the win widget became the compact "situasi" card
@@ -293,6 +294,22 @@ mod tests {
                 "{anchor:?}: {fx} {fy}"
             );
         }
+    }
+
+    #[test]
+    fn old_coach_size_grows_for_the_numbers_strip() {
+        let dir = std::env::temp_dir().join(format!("dlm-layout-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("hud-layout.json");
+        let mut old = Layout::default();
+        if let Some(c) = old.widgets.get_mut("coach") {
+            c.w = 440.0;
+            c.h = 92.0;
+        }
+        save(&path, &old);
+        let c = load(&path).widgets["coach"].clone();
+        assert_eq!((c.w, c.h), (460.0, 122.0));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

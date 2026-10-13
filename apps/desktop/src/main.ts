@@ -7,6 +7,7 @@ import { emit, listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import type { BuildStep, DeathPattern, DeathReview, DraftOddsResult, HeroCombo, EnemyMatchup, ImbueAdvice, ItemPlay, GamePlan, LiveState, MacroPlan, MatchLog, PlayerScout, TeamPhaseCompare, Tip, WinSmoothState, MacroHoldState, TipHoldState } from "@deadlock/core";
+import { ic, hydrateIcons } from "./icons";
 import { detectMode, formatClock, smoothWinProb, holdMacroPlan, stabilizeTips, computeLagSeconds, filterPendingBuys, computeSoulsPacing, calibrateProb } from "@deadlock/core";
 
 // ---------- engine events (Rust serde: tag "type", kebab-case) ----------
@@ -104,6 +105,9 @@ function getHeroAssetIcon(id: number): string | null {
   const slug = S.heroes.get(id)?.slug ?? HERO_ASSET_SLUGS[id];
   return slug ? `https://assets-bucket.deadlock-api.com/assets-api-res/images/heroes/${slug}_sm.webp` : null;
 }
+
+// static markup (nav, window buttons) carries data-icon placeholders
+hydrateIcons();
 
 const failedHeroIcons = new Set<string>();
 // one capturing listener instead of inline onerror="" (inline handlers are blocked by the CSP
@@ -977,8 +981,8 @@ function renderStatus() {
       : detectMode(S.live).isBrawl
         ? ` <span class="tag hot">Brawl 4v4</span>`
         : "";
-    html = `<b>LIVE</b> #${S.matchId ?? "?"}${modeBadge} · ${formatClock(S.live.gameTimeS)} <span class="small">· di game ±${formatClock(S.live.gameTimeS + lagSeconds())} · telat ${lagSeconds()} dtk</span>${lagSeconds() >= 150 ? ` <span class="stale">⚠ broadcast tertinggal ${Math.round(lagSeconds() / 60)} mnt: tekan ✓ Sudah beli setelah belanja</span>` : ""}${
-      stale >= 30 ? ` <span class="stale">⚠ data berhenti ${stale} dtk, saran bisa basi</span>` : ""
+    html = `<b>LIVE</b> #${S.matchId ?? "?"}${modeBadge} · ${formatClock(S.live.gameTimeS)} <span class="small">· di game ±${formatClock(S.live.gameTimeS + lagSeconds())} · telat ${lagSeconds()} dtk</span>${lagSeconds() >= 150 ? ` <span class="stale">${ic("alert")} broadcast tertinggal ${Math.round(lagSeconds() / 60)} mnt: tekan ✓ Sudah beli setelah belanja</span>` : ""}${
+      stale >= 30 ? ` <span class="stale">${ic("alert")} data berhenti ${stale} dtk, saran bisa basi</span>` : ""
     }`;
   } else if (S.matchId) {
     html = `Match <b>#${S.matchId}</b> (${esc(S.matchSource)}) · menyambung ke broadcast…`;
@@ -997,7 +1001,7 @@ function renderStatus() {
   const st = $("status");
   if (st) st.innerHTML = html;
   const vb = document.getElementById("voice");
-  if (vb) vb.textContent = S.voice ? "🔊" : "🔇";
+  if (vb) vb.innerHTML = ic(S.voice ? "volume" : "mute");
   const mode = $("mode");
   if (mode) {
     mode.textContent = S.clickThrough ? "klik-tembus" : "interaktif";
@@ -1006,32 +1010,102 @@ function renderStatus() {
 }
 
 const TIP_ICON: Record<Tip["kind"], string> = {
-  push: "⚔", retreat: "⛔", objective: "◎", buy: "$", tempo: "⏱", threat: "!", momentum: "↗", farm: "⛏", death: "✝",
+  push: "swords", retreat: "octagon", objective: "flag", buy: "coins", tempo: "clock", threat: "alert", momentum: "up", farm: "sprout", death: "skull",
+};
+const TIP_LABEL: Record<Tip["kind"], string> = {
+  push: "Serang", retreat: "Mundur", objective: "Objektif", buy: "Beli", tempo: "Tempo", threat: "Ancaman", momentum: "Momentum", farm: "Farm", death: "Review mati",
 };
 
 /**
- * Coach banner. Compact: the main instruction in one bold line + one short line of why,
- * the other tips as single title chips (full text on hover). The HUD widget uses `hud`
- * (even tighter, no sub-tips) so it does not cover the fight.
+ * One line of numbers under the coach call, so the box answers "how are we doing and what
+ * do I buy" at a glance: win chance (+trend), team souls lead, next item and what it still
+ * costs from the souls in hand, then the count of other calls (HUD) or the age of the data.
+ */
+function coachStrip(r: LiveResp, hud: boolean, extra = "", shopping = false): string {
+  const parts: string[] = [];
+  const p = r.winProbability;
+  if (p != null) {
+    const d = hud ? HUD.winTrend : winTrend();
+    const tr = d != null && Math.abs(d) >= 0.03 ? `<span class="${d > 0 ? "win" : "loss"}">${ic(d > 0 ? "up" : "down", "xs")}</span>` : "";
+    parts.push(`<span class="seg" title="Peluang menang (dihaluskan)"><b class="${p >= 0.5 ? "win" : "loss"}">${pct(p, 0)}</b>${tr}</span>`);
+  }
+  parts.push(`<span class="seg" title="Selisih souls tim"><b class="${r.netWorthLead >= 0 ? "win" : "loss"}">${r.netWorthLead >= 0 ? "+" : "−"}${k(Math.abs(r.netWorthLead))}</b><span class="muted">souls</span></span>`);
+  const next = r.buildPath[0];
+  const m = me();
+  const souls = hud ? HUD.souls : m ? soulsNow(m) : null;
+  if (shopping && souls != null) {
+    // while dead the list is already in the text: show what there is to spend
+    parts.push(`<span class="seg grow-seg">${ic("coins", "xs muted")}<b>${k(souls)}</b><span class="muted">souls di tangan</span></span>`);
+  } else if (next) {
+    const left = souls != null ? Math.max(0, next.cost - souls) : next.missing;
+    const ready = left <= 0;
+    parts.push(
+      `<span class="seg grow-seg" title="Beli berikutnya (Ctrl+Shift+B = sudah beli)">${ic("bag", "xs muted")}<span class="ell">${esc(next.name)}</span>${
+        ready ? `<b class="win">siap</b>` : `<span class="muted">−${k(left)}</span>`
+      }</span>`,
+    );
+  }
+  if (extra) parts.push(extra);
+  return `<div class="coach-strip">${parts.join("")}</div>`;
+}
+
+/**
+ * Coach banner. Compact: the main call in one bold line, up to two lines of why, and the
+ * numbers strip. It is never an empty box: with no call it shows the game plan, and while
+ * I am dead it turns into a respawn clock + shopping list (the moment to spend souls).
+ * The HUD widget uses `hud` (no sub-tip chips) so it does not cover the fight.
  */
 function coachCard(r: LiveResp, hud = false) {
   if (S.ended || S.live?.winningTeam !== undefined) return "";
   const staleAge = hud ? HUD.staleAgeS : (lastLiveSuccess > 0 && Date.now() - lastLiveSuccess > 15_000 ? Math.round((Date.now() - lastLiveSuccess) / 1000) : null);
-  const staleTag = staleAge != null ? ` <span class="tag muted" style="font-size:9px" title="Data terakhir dari server analitik">${staleAge}s lalu</span>` : "";
+  const stale = staleAge != null ? `<span class="seg stale-seg" title="Data terakhir dari server analitik">${ic("clock", "xs")}${staleAge}s</span>` : "";
+  const m = me();
+  const lag = hud ? HUD.lag : lagSeconds();
+  const shell = (kind: string, icon: string, label: string, title: string, detail: string, extraStrip = "", sub = "", shopping = false) =>
+    `<section class="coach compact ${kind}${freshTop ? " fresh" : ""}${hud ? " hud" : ""}">
+      <div class="coach-main"><span class="coach-ico">${ic(icon)}</span><div class="coach-txt">
+        <div class="coach-head"><b>${esc(title)}</b><span class="coach-tag">${esc(label)}</span></div>
+        ${detail ? `<p title="${esc(detail)}">${esc(detail)}</p>` : ""}
+      </div></div>
+      ${coachStrip(r, hud, extraStrip + stale, shopping)}${sub}
+    </section>`;
+
+  // dead: the broadcast's respawn time is an in-game time, so it is exact despite the delay
+  const deadLeft = m?.dead ? (m.respawnInS ?? 0) - lag : 0;
+  if (m?.dead && deadLeft > 3) {
+    const back = formatClock(r.gameTimeS + (m.respawnInS ?? 0));
+    const souls = hud ? (HUD.souls ?? 0) : soulsNow(m);
+    let left = souls;
+    const shop: string[] = [];
+    for (const st of r.buildPath) {
+      if (st.cost <= left) {
+        shop.push(`${st.name} ${k(st.cost)}`);
+        left -= st.cost;
+      }
+      if (shop.length >= 3) break;
+    }
+    const why = r.tips.find((t) => t.kind === "death");
+    const detail = shop.length
+      ? `Belanja sekarang: ${shop.join(" · ")}${why ? `. ${why.title.replace(/^Kenapa mati:\s*/i, "Penyebab: ")}` : ""}`
+      : why
+        ? `${why.title.replace(/^Kenapa mati:\s*/i, "Penyebab: ")}. ${why.detail}`
+        : `Souls ${k(souls)}: belum cukup untuk item berikutnya, simpan dan farm setelah hidup.`;
+    return shell("death", "respawn", "Mati", `Hidup lagi ${back}`, detail, "", "", true);
+  }
 
   if (!r.tips.length) {
-    // never an empty box: a blank HUD Coach looks like the widget vanished mid-match
-    return `<section class="coach calm compact${hud ? " hud" : ""}"><div class="coach-main"><span class="coach-ico">✓</span><div class="coach-txt"><b>Farm & ikuti build${staleTag}</b></div></div></section>`;
+    // no call: the game plan (or the build) keeps the box useful instead of a bare "farm"
+    const gp = r.gamePlan && !r.gamePlan.flat ? r.gamePlan : null;
+    const title = gp ? gp.title : "Farm & ikuti build";
+    const detail = gp ? gp.detail : r.macro?.lane ? `Fokus lane ${r.macro.lane.name} (${r.macro.lane.status}).` : "";
+    return shell("calm", gp ? "map" : "check", gp ? "Rencana" : "Tenang", title, detail);
   }
   const [main, ...rest] = r.tips;
-  const sub = hud
-    ? ""
-    : rest.length
-      ? `<div class="coach-chips">${rest.map((t) => `<span class="chip ${t.kind}" title="${esc(t.detail)}">${TIP_ICON[t.kind]} ${esc(t.title)}</span>`).join("")}</div>`
-      : "";
-  return `<section class="coach compact ${main.kind}${freshTop ? " fresh" : ""}${hud ? " hud" : ""}">
-    <div class="coach-main"><span class="coach-ico">${TIP_ICON[main.kind]}</span><div class="coach-txt"><b>${esc(main.title)}${staleTag}</b><p title="${esc(main.detail)}">${esc(main.detail)}</p></div></div>${sub}
-  </section>`;
+  const more = hud && rest.length ? `<span class="seg muted" title="${esc(rest.map((t) => t.title).join(" · "))}">+${rest.length} saran</span>` : "";
+  const chips = !hud && rest.length
+    ? `<div class="coach-chips">${rest.map((t) => `<span class="chip ${t.kind}" title="${esc(t.detail)}">${ic(TIP_ICON[t.kind], "xs")} ${esc(t.title)}</span>`).join("")}</div>`
+    : "";
+  return shell(main.kind, TIP_ICON[main.kind], TIP_LABEL[main.kind], main.title, main.detail, more, chips);
 }
 
 function winCard(r: LiveResp) {
@@ -1071,7 +1145,7 @@ function winCard(r: LiveResp) {
       const p = computeSoulsPacing(m.netWorth, r.gameTimeS);
       if (!p) return "";
       return `<div class="row small" style="margin-top:6px;padding:4px 8px;border-radius:6px;background:rgba(229,179,88,0.08);border:1px solid rgba(229,179,88,0.2);justify-content:space-between">
-        <span>⚡ <b>Pacing Souls (${formatClock(r.gameTimeS)}):</b> kamu <b>${k(p.current)}</b></span>
+        <span>${ic("zap")} <b>Pacing Souls (${formatClock(r.gameTimeS)}):</b> kamu <b>${k(p.current)}</b></span>
         <span class="${p.isAhead ? "win" : "loss"}" style="font-weight:700">${p.label}</span>
       </div>`;
     })()}
@@ -1080,7 +1154,7 @@ function winCard(r: LiveResp) {
       r.draftOdds
         ? `<div class="draft-odds-box" style="margin-top:6px;padding:6px 8px;border-radius:6px;background:rgb(255 255 255 / .04);border:1px solid rgb(255 255 255 / .08)">
             <div class="row small" style="justify-content:space-between">
-              <span>⚖️ <b>Prediksi Draft Lineup:</b> <span class="${r.draftOdds.winProbability >= 0.5 ? "win" : "loss"}"><b>${pct(r.draftOdds.winProbability, 0)}</b></span></span>
+              <span>${ic("scale")} <b>Prediksi Draft Lineup:</b> <span class="${r.draftOdds.winProbability >= 0.5 ? "win" : "loss"}"><b>${pct(r.draftOdds.winProbability, 0)}</b></span></span>
               <span class="muted">Peak: <b>${PHASE_NAME[r.draftOdds.peakPhase]}</b></span>
             </div>
             <div class="row small muted" style="gap:8px;margin-top:3px;font-size:11px">
@@ -1090,12 +1164,12 @@ function winCard(r: LiveResp) {
             </div>
             ${
               r.draftOdds.advantages[0]
-                ? `<div class="small win" style="margin-top:3px;font-size:11px">🛡️ Edge: <b>${esc(S.heroes.get(r.draftOdds.advantages[0].ourHeroId)?.name ?? `#${r.draftOdds.advantages[0].ourHeroId}`)}</b> vs <b>${esc(S.heroes.get(r.draftOdds.advantages[0].enemyHeroId)?.name ?? `#${r.draftOdds.advantages[0].enemyHeroId}`)}</b> (+${(r.draftOdds.advantages[0].delta * 100).toFixed(1)}%)</div>`
+                ? `<div class="small win" style="margin-top:3px;font-size:11px">${ic("shield")} Edge: <b>${esc(S.heroes.get(r.draftOdds.advantages[0].ourHeroId)?.name ?? `#${r.draftOdds.advantages[0].ourHeroId}`)}</b> vs <b>${esc(S.heroes.get(r.draftOdds.advantages[0].enemyHeroId)?.name ?? `#${r.draftOdds.advantages[0].enemyHeroId}`)}</b> (+${(r.draftOdds.advantages[0].delta * 100).toFixed(1)}%)</div>`
                 : ""
             }
             ${
               r.draftOdds.threats[0]
-                ? `<div class="small loss" style="margin-top:2px;font-size:11px">⚠️ Awas: <b>${esc(S.heroes.get(r.draftOdds.threats[0].enemyHeroId)?.name ?? `#${r.draftOdds.threats[0].enemyHeroId}`)}</b> vs <b>${esc(S.heroes.get(r.draftOdds.threats[0].ourHeroId)?.name ?? `#${r.draftOdds.threats[0].ourHeroId}`)}</b> (${(r.draftOdds.threats[0].delta * 100).toFixed(1)}%)</div>`
+                ? `<div class="small loss" style="margin-top:2px;font-size:11px">${ic("alert")} Awas: <b>${esc(S.heroes.get(r.draftOdds.threats[0].enemyHeroId)?.name ?? `#${r.draftOdds.threats[0].enemyHeroId}`)}</b> vs <b>${esc(S.heroes.get(r.draftOdds.threats[0].ourHeroId)?.name ?? `#${r.draftOdds.threats[0].ourHeroId}`)}</b> (${(r.draftOdds.threats[0].delta * 100).toFixed(1)}%)</div>`
                 : ""
             }
           </div>`
@@ -1117,7 +1191,7 @@ function buildPathCard(r: LiveResp) {
         ? `<small>${esc(r.build.name)} · ${pct(r.build.winrate)} <button class="copy" data-copy="${r.build.id}">ID ${r.build.id}</button></small>`
         : `<small>${k(HUD_SOULS ?? soulsNow(m))} souls di tangan</small>`;
   const sell = r.sell
-    ? `<div class="small" style="margin-bottom:6px;padding:5px 7px;border-radius:6px;background:rgb(226 103 92 / .12)">💱 <b>Jual ${esc(r.sell.sellName)}</b> (+${k(r.sell.refund)}) → <b>${esc(r.sell.forName)}</b><div class="muted">${esc(r.sell.reason)}</div></div>`
+    ? `<div class="small" style="margin-bottom:6px;padding:5px 7px;border-radius:6px;background:rgb(226 103 92 / .12)">${ic("swap")} <b>Jual ${esc(r.sell.sellName)}</b> (+${k(r.sell.refund)}) → <b>${esc(r.sell.forName)}</b><div class="muted">${esc(r.sell.reason)}</div></div>`
     : "";
   const sw = r.switched ? `<div class="small" style="margin-bottom:6px">↺ <b>Target diganti:</b> <span class="muted">${esc(r.switched)}</span></div>` : "";
   return `<section class="card">
@@ -1139,8 +1213,8 @@ function buildPathCard(r: LiveResp) {
             ${s.kind === "flex" ? `<span class="tag flex">FLEX</span>` : ""}
             ${r.sell && r.sell.forId === s.itemId ? `<span class="tag loss">JUAL DULU</span>` : s.affordable ? `<span class="tag ok">BISA BELI</span>` : `<span class="small muted">kurang ${k(s.missing)}</span>`}
             <button class="copy" data-bought="${s.itemId}" title="Tandai sudah dibeli (broadcast telat ±${lagSeconds()} dtk)">✓ Sudah beli</button></div>
-          ${s.locked && S.commit ? `<div class="small" style="color:var(--brass)">🔒 target sejak ${formatClock(S.commit.sinceS)}: tidak diganti sampai terbeli</div>` : ""}
-          ${s.upgradeFrom && s.fullCost ? `<div class="small win">⬆ bayar ${k(s.cost)} saja (harga ${k(s.fullCost)}, komponen dipotong)</div>` : ""}
+          ${s.locked && S.commit ? `<div class="small" style="color:var(--brass)">${ic("lock")} target sejak ${formatClock(S.commit.sinceS)}: tidak diganti sampai terbeli</div>` : ""}
+          ${s.upgradeFrom && s.fullCost ? `<div class="small win">${ic("upgrade")} bayar ${k(s.cost)} saja (harga ${k(s.fullCost)}, komponen dipotong)</div>` : ""}
           <div class="small muted">${esc(s.reason)}</div>${imbueLines(r.imbue?.find((x) => x.itemId === s.itemId), i === 0 ? 3 : 1)}${i === 0 || s.kind === "flex" ? playLines(r.playbook?.next.find((p) => p.itemId === s.itemId), 2) : ""}</div>
         </div>`;
               },
@@ -1270,7 +1344,7 @@ function planCard(r: LiveResp) {
         <b>${esc(l.name)}</b>
         <span class="small">kita: ${l.ourStage === 0 ? "utuh" : `${STAGE[l.ourStage - 1]} hancur`}</span>
         <span class="small">lawan: ${l.enemyStage === 0 ? "utuh" : `${STAGE[l.enemyStage - 1]} hancur`}</span>
-        <span class="small muted">${l.enemyLaners.map((e) => `${esc(S.heroes.get(e.heroId)?.name ?? "#" + e.heroId)}${e.dead ? " ✝" : ""}`).join(", ")}</span>
+        <span class="small muted">${l.enemyLaners.map((e) => `${esc(S.heroes.get(e.heroId)?.name ?? "#" + e.heroId)}${e.dead ? ` ${ic("skull", "dim")}` : ""}`).join(", ")}</span>
       </div>`,
         )
         .join("")}</div>`
@@ -1278,7 +1352,7 @@ function planCard(r: LiveResp) {
   return `<section class="card"><h3>Game plan <small>${g ? (g.flat ? "lineup seimbang di semua fase" : `window kamu: ${PH_LABEL[g.ourWindow]}${g.theirWindow !== g.ourWindow ? ` · lawan: ${PH_LABEL[g.theirWindow]}` : ""}`) : ""}</small></h3>
     ${g ? `<b>${esc(g.title)}</b><p class="small" style="margin:3px 0 0">${esc(g.detail)}</p>` : ""}
     ${spikeLine(r)}
-    ${r.partner ? `<p class="small" style="margin:4px 0 0">🤝 Main bareng <b>${esc(r.partner.name)}</b> <span class="win">${delta(r.partner.delta)}%</span> <span class="muted">${esc(r.partner.why)}</span></p>` : ""}
+    ${r.partner ? `<p class="small" style="margin:4px 0 0">${ic("link")} Main bareng <b>${esc(r.partner.name)}</b> <span class="win">${delta(r.partner.delta)}%</span> <span class="muted">${esc(r.partner.why)}</span></p>` : ""}
     ${lanes}
   </section>`;
 }
@@ -1289,7 +1363,7 @@ function spikeLine(r: LiveResp) {
   const total = s.mine + s.enemy || 1;
   const until = s.untilClock ? `sampai ${s.untilClock}` : `±${Math.round(s.windowLeft)} dtk`;
   const label = s.verdict === "fight" ? `<b class="win">Tim kamu lebih kuat ${until}</b>` : s.verdict === "avoid" ? `<b class="loss">Lawan lebih kuat ${until}</b>` : `<span class="muted">Power spike seimbang</span>`;
-  return `<div style="margin-top:6px"><div class="row small" style="justify-content:space-between"><span>⚡ ${label}</span><span class="muted">item besar 3 menit terakhir</span></div>
+  return `<div style="margin-top:6px"><div class="row small" style="justify-content:space-between"><span>${ic("zap")} ${label}</span><span class="muted">item besar 3 menit terakhir</span></div>
     <div class="nw"><div class="a" style="width:${(s.mine / total) * 100}%"></div><div class="b" style="width:${(s.enemy / total) * 100}%"></div></div></div>`;
 }
 
@@ -1297,7 +1371,7 @@ function playLines(p: ItemPlay | undefined, max = 3) {
   // plain stat items have nothing to explain
   if (!p || (!p.active && !p.target && !p.combo.length)) return "";
   return `<div class="play">
-    ${p.target ? `<div class="small">🎯 <b>${esc(p.target.name)}</b> <span class="muted">${esc(p.target.why)}</span></div>` : ""}
+    ${p.target ? `<div class="small">${ic("target")} <b>${esc(p.target.name)}</b> <span class="muted">${esc(p.target.why)}</span></div>` : ""}
     ${p.when && p.when !== "Pasif, tidak perlu diaktifkan." ? `<div class="small muted">${esc(p.when)}</div>` : ""}
     ${p.combo.slice(0, max).map((c) => `<div class="small">↳ ${esc(c)}</div>`).join("")}
   </div>`;
@@ -1308,7 +1382,7 @@ function imbueLines(a: ImbueAdvice | undefined, max = 3) {
   if (!a) return "";
   const src = a.source === "data+stat" ? (a.agree === false ? "data ≠ stat" : "stat + data") : "dari stat";
   return `<div class="play imbue">
-    <div class="small">✨ <b>Imbue → ${esc(a.target.name)}</b> <span class="tag ${a.agree === false ? "muted" : "ok"}">${src}</span> <span class="muted">pilih saat beli</span></div>
+    <div class="small">${ic("sparkles")} <b>Imbue → ${esc(a.target.name)}</b> <span class="tag ${a.agree === false ? "muted" : "ok"}">${src}</span> <span class="muted">pilih saat beli</span></div>
     ${a.reasons.slice(0, max).map((x) => `<div class="small muted">↳ ${esc(x)}</div>`).join("")}
     ${max >= 3 && a.alternatives.length ? `<div class="small muted">Alternatif: ${a.alternatives.map((x) => `${esc(x.name)}${x.share != null ? ` (${pct(x.share, 0)})` : ""}`).join(", ")}</div>` : ""}
   </div>`;
@@ -1339,7 +1413,7 @@ function deathsCard(r: LiveResp) {
         rv.sources.length
           ? `<div class="dmg-rows">${rv.sources
               .map(
-                (s) => `<div class="row small"><span class="name">${esc(s.heroName)} · ${esc(s.name)}${s.killingBlow ? " ✝" : ""}</span><span class="muted">${s.critPct >= 0.2 ? `${Math.round(s.critPct * 100)}% HS · ` : ""}</span><b>${Math.round(s.pct * 100)}%</b></div>
+                (s) => `<div class="row small"><span class="name">${esc(s.heroName)} · ${esc(s.name)}${s.killingBlow ? ` ${ic("skull", "dim")}` : ""}</span><span class="muted">${s.critPct >= 0.2 ? `${Math.round(s.critPct * 100)}% HS · ` : ""}</span><b>${Math.round(s.pct * 100)}%</b></div>
                  <div class="dbar"><div style="width:${Math.round(s.pct * 100)}%" class="${s.kind === "peluru" ? "b-w" : s.kind === "tower/creep" ? "b-t" : "b-s"}"></div></div>`,
               )
               .join("")}</div>`
@@ -1400,7 +1474,7 @@ function enemiesCard(r: LiveResp) {
         </div>
         <div class="small" style="margin-top:4px">${esc(mu.advice)}</div>
         ${mu.recentItems.length ? `<div class="small muted">Item terbaru: ${mu.recentItems.map(esc).join(", ")}${mu.bulletShare != null ? ` · damage ${pct(mu.bulletShare, 0)} peluru` : ""}</div>` : ""}
-        ${(mu.notable ?? []).map((n) => `<div class="small">⚠ <b>${esc(n.name)}</b> <span class="muted">${esc(n.note)}</span></div>`).join("")}
+        ${(mu.notable ?? []).map((n) => `<div class="small">${ic("alert")} <b>${esc(n.name)}</b> <span class="muted">${esc(n.note)}</span></div>`).join("")}
         ${mu.bestCounter ? `<div class="small">Counter: <b>${esc(mu.bestCounter.name)}</b> <span class="win">+${(mu.bestCounter.delta * 100).toFixed(1)}%</span></div>` : ""}
         ${
           sc
@@ -1453,7 +1527,7 @@ function connectionCard() {
   // Hero status banner
   const banner = `
     <div class="home-banner ${isLive ? "live" : isReady ? "ready" : ""}">
-      <div class="banner-badge">${isLive ? "🔴" : isReady ? "🟢" : "⏳"}</div>
+      <div class="banner-badge">${ic(isLive ? "radio" : isReady ? "check" : "hourglass")}</div>
       <div class="banner-content">
         <div class="banner-title">${isLive ? "Match Live Terhubung" : isReady ? "Deadlock Siap & Terhubung" : "Menunggu Game Deadlock"}</div>
         <div class="banner-desc">${isLive ? `Live #${S.matchId ?? "?"} · Asisten & HUD aktif real-time` : isReady ? "Proses game terdeteksi. Asisten akan aktif otomatis saat match dimulai." : "Buka Deadlock di Steam (Borderless Windowed + launch option <code>-condebug</code>)."}</div>
@@ -1483,7 +1557,7 @@ function connectionCard() {
   const launcher = `
     <div class="match-launcher">
       <div class="match-input-wrap">
-        <span class="match-input-icon">🎮</span>
+        <span class="match-input-icon">${ic("gamepad")}</span>
         <input id="matchInput" placeholder="Ketik Match ID untuk live manual…" inputmode="numeric" value="${esc(S.matchDraft)}">
       </div>
       <button class="btn" id="matchGo">Mulai Live</button>
@@ -1495,28 +1569,28 @@ function connectionCard() {
   const quickActions = `
     <div class="quick-actions-grid">
       <button class="quick-action-card" id="hudEdit">
-        <span class="quick-action-ico">🎯</span>
+        <span class="quick-action-ico">${ic("move")}</span>
         <div class="quick-action-text">
           <strong>Atur Posisi HUD</strong>
           <span>Geser widget di layar</span>
         </div>
       </button>
       <button class="quick-action-card" data-copy="${esc(siteBase)}">
-        <span class="quick-action-ico">📊</span>
+        <span class="quick-action-ico">${ic("chart")}</span>
         <div class="quick-action-text">
           <strong>Tier List & Meta</strong>
           <span>Buka link web meta</span>
         </div>
       </button>
       <button class="quick-action-card" data-copy="${esc(siteBase + "/counter")}">
-        <span class="quick-action-ico">🛡️</span>
+        <span class="quick-action-ico">${ic("shield")}</span>
         <div class="quick-action-text">
           <strong>Counter Builder</strong>
           <span>Analisis lawan & item</span>
         </div>
       </button>
       <button class="quick-action-card" data-copy="${esc(siteBase + "/draft")}">
-        <span class="quick-action-ico">⚖️</span>
+        <span class="quick-action-ico">${ic("scale")}</span>
         <div class="quick-action-text">
           <strong>Draft Analyzer</strong>
           <span>Prediksi komposisi tim</span>
@@ -1547,7 +1621,7 @@ function connectionCard() {
 
   const diag = `
     <details class="diag-details">
-      <summary><span>⚙ Detail Diagnostik & Pengaturan Lanjut</span><span style="font-size:10px">▼</span></summary>
+      <summary><span>${ic("sliders")} Detail Diagnostik & Pengaturan Lanjut</span>${ic("chevron")}</summary>
       <div class="diag-content">
         ${rows.join("")}
         <label class="row small" style="gap:6px;cursor:pointer;margin-top:6px">
@@ -1595,12 +1669,12 @@ function heroPickCard() {
         .join("")}
     </div>
     <div class="row" style="margin-top:8px">
-      ${selected ? heroIcon(selected.heroId, "ico") : `<span class="ico" style="display:grid;place-items:center;color:var(--muted)">🎮</span>`}
+      ${selected ? heroIcon(selected.heroId, "ico") : `<span class="ico" style="display:grid;place-items:center;color:var(--muted)">${ic("gamepad")}</span>`}
       <select id="heroSel" style="flex:1"><option value="">Pilih / cari hero dari daftar…</option>
         ${heroes.map((h) => `<option value="${h.heroId}" ${h.heroId === S.pregameHero ? "selected" : ""}>${esc(h.name)} (WR ${pct(h.winrate, 0)} · Tier ${h.tier})</option>`).join("")}</select>
     </div>
     <div class="row small muted" style="margin-top:8px;gap:6px;align-items:center;flex-wrap:wrap">
-      <span>💡 <b>Rekomendasi Draft Meta (Tier S):</b></span>
+      <span>${ic("bulb")} <b>Rekomendasi Draft Meta (Tier S):</b></span>
       ${heroes
         .filter((h) => h.tier === "S")
         .slice(0, 4)
@@ -1702,7 +1776,7 @@ function renderHeroDossierBody(h: HeroInfo) {
         .map((p) => `<div class="${ph.peak === p ? "peak" : ""}"><span class="small muted">${p.toUpperCase()}</span><b class="${wrCls(ph.phases[p].winrate)}">${pct(ph.phases[p].winrate)}</b></div>`)
         .join("")}</div>
        <p class="small muted" style="margin:6px 0 0">${
-         ph.scaling > 0.02 ? "📈 Scaling kuat: peluang menang meningkat di late game." : ph.scaling < -0.02 ? "⚡ Early pressure: kuat di awal, tekan objektif sebelum ±28 menit." : "⚖ Stabil seimbang di semua fase durasi match."
+         ph.scaling > 0.02 ? `${ic("up")} Scaling kuat: peluang menang meningkat di late game.` : ph.scaling < -0.02 ? `${ic("zap")} Early pressure: kuat di awal, tekan objektif sebelum ±28 menit.` : `${ic("scale")} Stabil seimbang di semua fase durasi match.`
        }</p>`
     : "";
   const builds = h.builds.length
@@ -1766,8 +1840,8 @@ function renderHeroDossierBody(h: HeroInfo) {
 
     countersHtml = `<section class="card">
       <h3>Intel Draft & Matchup <small>Berdasarkan Head-to-Head Meta</small></h3>
-      ${adv ? `<div style="margin-top:4px"><span class="small win" style="font-weight:700">🛡️ UNGGUL LAWAN (Target Counter):</span><div class="items-tier-grid" style="margin-top:4px">${adv}</div></div>` : ""}
-      ${thr ? `<div style="margin-top:8px"><span class="small loss" style="font-weight:700">⚠️ WASPADAI (Ancaman Utama):</span><div class="items-tier-grid" style="margin-top:4px">${thr}</div></div>` : ""}
+      ${adv ? `<div style="margin-top:4px"><span class="small win" style="font-weight:700">${ic("shield")} UNGGUL LAWAN (Target Counter):</span><div class="items-tier-grid" style="margin-top:4px">${adv}</div></div>` : ""}
+      ${thr ? `<div style="margin-top:8px"><span class="small loss" style="font-weight:700">${ic("alert")} WASPADAI (Ancaman Utama):</span><div class="items-tier-grid" style="margin-top:4px">${thr}</div></div>` : ""}
     </section>`;
   }
 
@@ -1796,7 +1870,7 @@ function renderRosterView() {
   return `<div class="roster-view">
     <div class="roster-toolbar">
       <div class="roster-search">
-        <span class="muted">🔍</span>
+        <span class="muted">${ic("search")}</span>
         <input id="rosterSearchInput" placeholder="Cari nama hero..." value="${esc(S.rosterSearch)}">
       </div>
       <div class="role-filters">
@@ -1837,7 +1911,7 @@ function renderRosterView() {
                 <span>Winrate Meta: <b class="${wrCls(selHero.winrate)}">${pct(selHero.winrate, 1)}</b></span>
               </div>
               <button class="hero-pregame-btn ${S.pregameHero === selHero.heroId ? "active" : ""}" data-hero-pick="${selHero.heroId}">
-                ${S.pregameHero === selHero.heroId ? "✓ Hero Pre-Game Terpilih" : "🎯 Kunci Sebagai Hero Pre-Game"}
+                ${S.pregameHero === selHero.heroId ? `${ic("check")} Hero Pre-Game Terpilih` : `${ic("lock")} Kunci Sebagai Hero Pre-Game`}
               </button>
             </div>
           </div>
@@ -1904,7 +1978,7 @@ function renderLastMatchCard(pm: { matchId: number; won: boolean | null; duratio
   const won = pm.won;
   const color = won == null ? "var(--muted)" : won ? "var(--win)" : "var(--loss)";
   const bg = won == null ? "255,255,255" : won ? "74,222,128" : "248,113,113";
-  const label = won == null ? "HASIL BELUM ADA (menunggu data match)" : won ? "VICTORY (MENANG) 🎉" : "DEFEAT (KALAH)";
+  const label = won == null ? "HASIL BELUM ADA (menunggu data match)" : won ? `${ic("trophy")} MENANG` : "KALAH";
   return `<section class="card" style="border:1px solid ${color};background:rgba(${bg},0.08)">
     <h3>Ringkasan Match Terakhir <small>Match #${pm.matchId}</small></h3>
     <div class="row" style="justify-content:space-between;margin-top:4px">
@@ -1925,7 +1999,7 @@ function renderProfileBanner() {
   return `
     <div class="player-banner">
       <div style="display:flex;align-items:center;gap:16px">
-        ${avatar ? `<img class="player-banner-avatar" src="${esc(avatar)}" alt="">` : `<div class="player-banner-avatar" style="display:flex;align-items:center;justify-content:center;background:rgba(229,179,88,0.15);font-size:24px">👤</div>`}
+        ${avatar ? `<img class="player-banner-avatar" src="${esc(avatar)}" alt="">` : `<div class="player-banner-avatar" style="display:flex;align-items:center;justify-content:center;background:rgba(229,179,88,0.15);font-size:24px;color:var(--brass)">${ic("user")}</div>`}
         <div class="player-banner-info">
           <div style="display:flex;align-items:center;gap:8px">
             <span class="player-banner-name">${esc(persona)}</span>
@@ -1935,7 +2009,7 @@ function renderProfileBanner() {
         </div>
       </div>
       <div style="display:flex;gap:8px">
-        <button class="copy" data-launcher-tab="settings">⚙ Pengaturan</button>
+        <button class="copy" data-launcher-tab="settings">${ic("sliders")} Pengaturan</button>
       </div>
     </div>
   `;
@@ -2009,14 +2083,14 @@ function renderSettingsView() {
         <label class="row small"><input type="checkbox" data-widget-toggle="buy" ${S.layout?.widgets?.buy?.enabled ?? true ? "checked" : ""}> <b>Saran Beli Item</b> (Kanan)</label>
       </div>
       <div class="row" style="margin-top:12px;gap:8px">
-        <button class="btn" id="hudEdit">📐 Atur Posisi HUD (Ctrl+Shift+E)</button>
+        <button class="btn" id="hudEdit">${ic("move")} Atur Posisi HUD (Ctrl+Shift+E)</button>
         <button class="copy" id="hudReset">Reset ke Posisi Standar</button>
       </div>
     </section>
     <section class="card">
       <h3>Suara & Audio Coach <small>Natural Voice & tactical cues</small></h3>
       <div class="row" style="align-items:center;gap:12px;margin-bottom:8px">
-        <button class="copy ${S.voice ? "ok" : ""}" id="voiceToggle">Suara Coach: ${S.voice ? "🔊 AKTIF" : "🔇 MATI"}</button>
+        <button class="copy ${S.voice ? "ok" : ""}" id="voiceToggle">Suara Coach: ${S.voice ? `${ic("volume")} AKTIF` : `${ic("mute")} MATI`}</button>
         <span class="small muted">Callout audio bahasa Indonesia natural saat Mid-Boss spawn, gank, dan instruksi push/retreat.</span>
       </div>
       <div class="row" style="gap:6px;align-items:center;flex-wrap:wrap">
@@ -2028,7 +2102,7 @@ function renderSettingsView() {
       </div>
       <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px">
         <span class="small muted">Uji Coba Suara Coach:</span>
-        <button class="btn" id="testVoiceBtn">🗣 Tes Suara Coach Natural</button>
+        <button class="btn" id="testVoiceBtn">${ic("mic")} Tes Suara Coach</button>
       </div>
     </section>
     ${connectionCard()}
@@ -2039,14 +2113,14 @@ function renderLiveStandby() {
   const heroPick = S.pregameHero ? S.heroes.get(S.pregameHero) : null;
   return `<div class="war-room-view">
     <section class="card" style="text-align:center;padding:24px 16px;background:linear-gradient(180deg, rgba(20,24,36,0.95) 0%, rgba(13,15,21,0.95) 100%)">
-      <div style="font-size:36px;margin-bottom:8px">⚔️</div>
+      <div class="empty-ico">${ic("swords")}</div>
       <h2 style="margin:0;font:800 22px 'Barlow Condensed', sans-serif;letter-spacing:.05em;color:var(--brass)">RUANG TAKTIS LIVE COACH</h2>
       <p class="muted" style="max-width:540px;margin:8px auto 14px">
         ${S.matchId ? `Match <b>#${S.matchId}</b> terdeteksi (${esc(S.matchSource)}) &bull; Menghubungkan ke broadcast spectate Valve…` : S.game ? "Deadlock sedang berjalan. Masuk ke match untuk mengaktifkan analisis live war-room otomatis." : "Deadlock belum terdeteksi. Buka game Deadlock atau gunakan tombol di bawah."}
       </p>
       <div class="row" style="justify-content:center;gap:10px">
         <button class="btn" data-launcher-tab="roster">Jelajahi Hero Roster & Build ↗</button>
-        <button class="copy" id="hudEdit">📐 Atur Posisi Widget HUD</button>
+        <button class="copy" id="hudEdit">${ic("move")} Atur Posisi Widget HUD</button>
       </div>
     </section>
     ${S.scout?.players.length ? scoutLobbyCard() : ""}
@@ -2095,7 +2169,7 @@ function renderLiveWarRoomView(r: LiveResp | null) {
     </div>
     <div class="card" style="margin-top:4px">
       <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap">
-        <button class="copy" id="hudEdit">📐 Atur Posisi HUD (Ctrl+Shift+E)</button>
+        <button class="copy" id="hudEdit">${ic("move")} Atur Posisi HUD (Ctrl+Shift+E)</button>
         <button class="copy" id="hudReset">Reset Posisi HUD</button>
         <span style="flex:1"></span>
         <button class="copy" id="matchStop" style="color:var(--loss)">Stop Match</button>
@@ -2118,11 +2192,11 @@ function renderHomeView() {
   return `<div class="home-dashboard">
     <div class="home-spotlight">
       <div class="home-spotlight-hero">
-        ${preHero ? heroIcon(preHero.heroId, "ico") : `<span class="ico">🎮</span>`}
+        ${preHero ? heroIcon(preHero.heroId, "ico") : `<span class="ico">${ic("gamepad")}</span>`}
         <div>
           <div class="row" style="align-items:center;gap:6px">
             <span class="tag ${preHero ? `tier-badge-${preHero.tier.toLowerCase()}` : ""}">HERO PILIHAN PRE-GAME</span>
-            <span class="small muted">${S.game ? "🎮 Deadlock Aktif" : "Menunggu Game"}</span>
+            <span class="small muted">${S.game ? `${ic("gamepad")} Deadlock Aktif` : "Menunggu Game"}</span>
           </div>
           <h2>${esc(preHero?.name ?? "Pilih Hero")}</h2>
           <div class="small muted">
@@ -2132,7 +2206,7 @@ function renderHomeView() {
       </div>
       <div class="row" style="gap:8px">
         <button class="btn" data-launcher-tab="roster">Ganti Hero / Lihat Build ↗</button>
-        ${S.connected || (S.matchId && S.live) ? `<button class="btn" data-launcher-tab="live" style="background:var(--riot-red);color:#fff">Masuk Live Coach ⚔</button>` : ""}
+        ${S.connected || (S.matchId && S.live) ? `<button class="btn" data-launcher-tab="live" style="background:var(--riot-red);color:#fff">${ic("swords")} Masuk Live Coach</button>` : ""}
       </div>
     </div>
     <div class="home-grid">
@@ -2203,7 +2277,7 @@ function handleOmniSearch(query: string) {
       itemsHtml += `<div class="omni-group-label" style="padding:4px 8px;font-size:10px;text-transform:uppercase;color:var(--fg-muted);font-weight:700">Player Scout</div>`;
       itemsHtml += `
         <div class="omni-item" data-omni-player="${esc(targetId)}">
-          <span class="ico" style="display:flex;align-items:center;justify-content:center;background:var(--brass);color:#10141d;font-weight:800;border-radius:4px">🔍</span>
+          <span class="ico" style="display:flex;align-items:center;justify-content:center;background:var(--brass);color:#10141d;font-weight:800;border-radius:4px">${ic("search")}</span>
           <div class="omni-item-info">
             <span class="omni-item-title">Scout Akun Steam #${esc(targetId)}</span>
             <span class="omni-item-sub">Lihat hero pool, riwayat winrate, dan tilt check</span>
@@ -2543,15 +2617,15 @@ function situasiHud(r: LiveResp) {
   const sp = r.spikes;
   const spike =
     sp && sp.verdict !== "even"
-      ? `<div class="hud-line ${sp.verdict === "fight" ? "win" : "loss"}">⚡ ${sp.verdict === "fight" ? "Spike tim kamu" : "Spike lawan"}: <b>${sp.verdict === "fight" ? "cari fight" : "tahan fight"}</b> sampai ${sp.untilClock ?? `±${Math.round(sp.windowLeft)}s`}</div>`
+      ? `<div class="hud-line ${sp.verdict === "fight" ? "win" : "loss"}">${ic("zap")} ${sp.verdict === "fight" ? "Spike tim kamu" : "Spike lawan"}: <b>${sp.verdict === "fight" ? "cari fight" : "tahan fight"}</b> sampai ${sp.untilClock ?? `±${Math.round(sp.windowLeft)}s`}</div>`
       : "";
   const mc = r.macro;
   const isBrawl = !!(r.mode?.isBrawl || (S.live && detectMode(S.live).isBrawl));
   // Clean HUD: Show 1 focused lane note if critical (e.g. pushed/threatened) instead of 4 cryptic arrow symbols
   const lanes = isBrawl
-    ? `<div class="hud-line win">🥊 <b>Street Brawl 4v4</b></div>`
+    ? `<div class="hud-line win">${ic("swords")} <b>Street Brawl 4v4</b></div>`
     : mc?.lane
-      ? `<div class="hud-line small" style="opacity:.9">🚩 Fokus Lane: <b class="${mc.lane.status === "kita tekan" ? "win" : mc.lane.status === "kita ditekan" ? "loss" : "brass"}">${esc(mc.lane.name)}</b> (${esc(mc.lane.status)})</div>`
+      ? `<div class="hud-line small" style="opacity:.9">${ic("flag")} Fokus Lane: <b class="${mc.lane.status === "kita tekan" ? "win" : mc.lane.status === "kita ditekan" ? "loss" : "brass"}">${esc(mc.lane.name)}</b> (${esc(mc.lane.status)})</div>`
       : "";
   const modeTag = r.mode ? ` <span class="tag ${r.mode.isBrawl ? "hot" : r.mode.isRanked ? "main" : "ok"}">${esc(r.mode.label)}</span>` : "";
   return `<section class="card hud situasi">
@@ -2560,21 +2634,21 @@ function situasiHud(r: LiveResp) {
     ${spike}
     ${
       r.draftOdds && (r.gameTimeS < 600 || Math.abs(r.netWorthLead) < 1500)
-        ? `<div class="hud-line small" style="opacity:.9">⚖️ Draft: <b class="${r.draftOdds.winProbability >= 0.5 ? "win" : "loss"}">${pct(r.draftOdds.winProbability, 0)}</b> · Peak ${PHASE_NAME[r.draftOdds.peakPhase]}${
+        ? `<div class="hud-line small" style="opacity:.9">${ic("scale")} Draft: <b class="${r.draftOdds.winProbability >= 0.5 ? "win" : "loss"}">${pct(r.draftOdds.winProbability, 0)}</b> · Peak ${PHASE_NAME[r.draftOdds.peakPhase]}${
             r.draftOdds.advantages[0]
               ? ` · Edge: ${esc(S.heroes.get(r.draftOdds.advantages[0].ourHeroId)?.name ?? `#${r.draftOdds.advantages[0].ourHeroId}`)}`
               : ""
           }</div>`
         : ""
     }
-    ${r.gamePlan ? `<div class="hud-line">🎯 <b>${esc(r.gamePlan.title)}</b></div>` : ""}
+    ${r.gamePlan ? `<div class="hud-line">${ic("map")} <b>${esc(r.gamePlan.title)}</b></div>` : ""}
     ${lanes}
     ${
       !isBrawl && r.gameTimeS >= 120 && r.gameTimeS <= 720
         ? (() => {
             const p = computeSoulsPacing(m.netWorth, r.gameTimeS);
             if (!p) return "";
-            return `<div class="hud-line small" style="opacity:.9">⚡ Laning Souls: target <b>${k(p.target)}</b> · kamu <b class="${p.isAhead ? "win" : "loss"}">${k(p.current)}</b> <span class="${p.isAhead ? "win" : "loss"}">(${p.delta >= 0 ? "+" : "−"}${k(Math.abs(p.delta))})</span></div>`;
+            return `<div class="hud-line small" style="opacity:.9">${ic("coins")} Laning Souls: target <b>${k(p.target)}</b> · kamu <b class="${p.isAhead ? "win" : "loss"}">${k(p.current)}</b> <span class="${p.isAhead ? "win" : "loss"}">(${p.delta >= 0 ? "+" : "−"}${k(Math.abs(p.delta))})</span></div>`;
           })()
         : ""
     }
@@ -2621,7 +2695,7 @@ function teamHtml(hud: boolean) {
         <span class="small ${r.nwRel >= 1 ? "win" : r.nwRel < 0.8 ? "loss" : ""} team-nw">${k(r.p.netWorth)}</span>
         ${
           r.p.dead
-            ? `<span class="tag loss team-status">💀${r.p.respawnInS ? Math.max(0, Math.round(r.p.respawnInS - (hud ? HUD.lag : lagSeconds()))) + "s" : ""}</span>`
+            ? `<span class="tag loss team-status">${ic("skull")}${r.p.respawnInS ? Math.max(0, Math.round(r.p.respawnInS - (hud ? HUD.lag : lagSeconds()))) + "s" : ""}</span>`
             : `<span class="small muted team-kda">${r.p.kills}/${r.p.deaths}/${r.p.assists}</span>`
         }
       </div>`,
@@ -2642,7 +2716,7 @@ function teamHtml(hud: boolean) {
     <div class="team-table">
       ${rows}
     </div>
-    ${ts.notes.map((n) => `<div class="small" style="margin-top:4px;padding:0 2px">💡 ${esc(n)}</div>`).join("")}
+    ${ts.notes.map((n) => `<div class="small" style="margin-top:4px;padding:0 2px">${ic("bulb")} ${esc(n)}</div>`).join("")}
   </section>`;
 }
 
@@ -2650,20 +2724,20 @@ function teamHtml(hud: boolean) {
 function teamLine() {
   const ts = teamStats();
   if (!ts || ts.total <= 0) return "";
-  return `<div class="hud-line small">👥 Damage kamu #${ts.rank}/${ts.count}${ts.carry ? ` · carry: <b>${esc(ts.name(ts.carry.p.heroId))}</b> ${Math.round(ts.carry.share * 100)}%` : ""} <span class="muted">(Ctrl+Shift+T)</span></div>`;
+  return `<div class="hud-line small">${ic("users")} Damage kamu #${ts.rank}/${ts.count}${ts.carry ? ` · carry: <b>${esc(ts.name(ts.carry.p.heroId))}</b> ${Math.round(ts.carry.share * 100)}%` : ""} <span class="muted">(Ctrl+Shift+T)</span></div>`;
 }
 
 /** HUD "Beli": sell first if needed, top items, imbue for #1, hotkey hint. */
 function beliHud(r: LiveResp) {
   const m = me()!;
   const steps = r.buildPath.slice(0, HUD.focus ? 2 : 3);
-  const sell = r.sell ? `<div class="hud-line loss">💱 Jual <b>${esc(r.sell.sellName)}</b> (+${k(r.sell.refund)}) → ${esc(r.sell.forName)}</div>` : "";
+  const sell = r.sell ? `<div class="hud-line loss">${ic("swap")} Jual <b>${esc(r.sell.sellName)}</b> (+${k(r.sell.refund)}) → ${esc(r.sell.forName)}</div>` : "";
   const im = steps[0] ? r.imbue?.find((x) => x.itemId === steps[0].itemId) : undefined;
   return `<section class="card hud beli"><h3>Beli <small>${r.adaptive ? `${PHASE_NAME[r.adaptive.phase]} · ` : ""}${k(HUD_SOULS ?? soulsNow(m))} souls</small></h3>${sell}${steps
     .map(
       (s2, i) => `<div class="step ${s2.affordable ? (i === 0 ? "ready-buy ok" : "ok") : ""}"><span class="num-badge">${i + 1}</span><div class="grow2"><div class="row"><span class="name ${SLOT_CLS[s2.slot as keyof typeof SLOT_CLS] ?? ""}">${esc(s2.name)}</span><span class="small">${k(s2.cost)}</span>${s2.kind === "flex" ? `<span class="tag flex">FLEX</span>` : ""}${
         r.sell && r.sell.forId === s2.itemId ? `<span class="tag loss">JUAL DULU</span>` : s2.affordable ? `<span class="tag ok" style="font-weight:bold">BISA BELI</span>` : `<span class="small muted">−${k(s2.missing)}</span>`
-      }</div>${i === 0 ? `<div class="small muted clamp1">${esc(s2.reason)}</div>${im ? `<div class="small" style="color:var(--spirit)">✨ Imbue → <b>${esc(im.target.name)}</b></div>` : ""}` : ""}</div></div>`,
+      }</div>${i === 0 ? `<div class="small muted clamp1">${esc(s2.reason)}</div>${im ? `<div class="small" style="color:var(--spirit)">${ic("sparkles")} Imbue → <b>${esc(im.target.name)}</b></div>` : ""}` : ""}</div></div>`,
     )
     .join("")}
     ${HUD.pending.length ? `<div class="small muted">✓ ditandai: ${HUD.pending.map(esc).join(", ")}</div>` : ""}
@@ -2689,7 +2763,7 @@ function startingItemsHud(heroId: number | null) {
       <h3>Beli <small>0:00 · 500 souls</small></h3>
       <span class="tag hot" style="font-size:10px">AWAL GAME</span>
     </div>
-    <div class="small muted" style="margin-bottom:6px">🚀 Beli 1 item Tier 1 di base (500 souls) sebelum zipline · <b>${esc(heroName)}</b>:</div>
+    <div class="small muted" style="margin-bottom:6px">${ic("bag")} Beli item Tier 1 di base sebelum zipline · <b>${esc(heroName)}</b>:</div>
     ${displayItems
       .map(
         (it, i) => `<div class="step ready-buy ok">
@@ -2764,7 +2838,7 @@ function renderWidget() {
       const priorityEnemy = r.matchups.find((m) => m.isTargetPriority);
       const priorityBadge = priorityEnemy
         ? `<div class="hud-line small" style="background:rgba(232,146,58,0.15);border:1px solid var(--weapon);border-radius:4px;padding:3px 6px;margin-bottom:6px">
-            🎯 <b>TARGET UTAMA:</b> ${esc(priorityEnemy.heroName)}
+            ${ic("crosshair")} <b>TARGET UTAMA:</b> ${esc(priorityEnemy.heroName)}
             <div class="muted" style="font-size:10px">${esc(priorityEnemy.priorityReason ?? "")}</div>
           </div>`
         : "";
@@ -2911,7 +2985,7 @@ function showFatal(where: string, e: unknown) {
 }
 const FATAL: string[] = [];
 const fatalHtml = () =>
-  FATAL.length ? `<div class="err" style="white-space:pre-wrap;font-size:11px">${FATAL.map((f) => `⚠ ${esc(f)}`).join("\n")}</div>` : "";
+  FATAL.length ? `<div class="err" style="white-space:pre-wrap;font-size:11px">${FATAL.map((f) => `! ${esc(f)}`).join("\n")}</div>` : "";
 window.addEventListener("error", (e) => showFatal("JS error", e.error ?? e.message));
 window.addEventListener("unhandledrejection", (e) => showFatal("Promise", e.reason));
 
