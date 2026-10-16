@@ -19,6 +19,7 @@ export * from "./buildlab";
 export const badgeTier = (badge: number) => Math.floor(badge / 10);
 export const badgeSubrank = (badge: number) => badge % 10;
 export * from "./phaseplan";
+export * from "./autobuild";
 export * from "./adaptive";
 export * from "./playbook";
 export * from "./macro";

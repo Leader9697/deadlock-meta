@@ -21,6 +21,7 @@ import {
   type PlanStep,
 } from "@deadlock/core";
 import type { LabInit } from "@/lib/lab-init";
+import { AutoBuildPanel } from "./AutoBuildPanel";
 
 type Slot = "weapon" | "vitality" | "spirit";
 type HeroData = {
@@ -184,6 +185,19 @@ export function BuildLab({ heroes, items, init = {} }: { heroes: (LabHero & { im
         </div>
       </div>
 
+      <AutoBuildPanel
+        heroId={heroId}
+        heroName={hero.name}
+        itemById={itemById}
+        onLoad={(ids, nw) => {
+          setBuilds((b) => ({ ...b, A: ids.filter((id) => itemById.has(id)).slice(0, MAX_ITEMS) }));
+          setActive("A");
+          setSouls(Math.min(60000, Math.round(nw / 500) * 500));
+        }}
+      />
+
+      <h2 className="font-display pt-2 text-lg font-bold">Kalkulator manual</h2>
+
       <PhasePlanPanel
         data={phaseInfo}
         loading={heroData === null}
@@ -206,7 +220,7 @@ export function BuildLab({ heroes, items, init = {} }: { heroes: (LabHero & { im
           </div>
           {tierGroups.map(({ t, list }) => (
             <div key={t} className="mb-3">
-              <div className="mb-1 text-[11px] uppercase tracking-wide text-muted">Tier {t} · {fmt([0, 800, 1600, 3200, 6400][t])}</div>
+              <div className="mb-1 text-[11px] uppercase tracking-wide text-muted">Tier {t}{list[0] ? ` · ${fmt(list[0].cost ?? 0)}` : ""}</div>
               <div className="grid grid-cols-[repeat(auto-fill,minmax(44px,1fr))] gap-1.5">
                 {list.map((it) => {
                   const owned = current.some((c) => c.id === it.id);

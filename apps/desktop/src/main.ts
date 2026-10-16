@@ -8,6 +8,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import type { BuildStep, DeathPattern, DeathReview, DraftOddsResult, HeroCombo, EnemyMatchup, ImbueAdvice, ItemPlay, GamePlan, LiveState, MacroPlan, MatchLog, PlayerScout, TeamPhaseCompare, Tip, WinSmoothState, MacroHoldState, TipHoldState } from "@deadlock/core";
 import { ic, hydrateIcons } from "./icons";
+import { itemCost } from "@deadlock/core";
 import { detectMode, formatClock, smoothWinProb, holdMacroPlan, stabilizeTips, computeLagSeconds, filterPendingBuys, computeSoulsPacing, calibrateProb } from "@deadlock/core";
 
 // ---------- engine events (Rust serde: tag "type", kebab-case) ----------
@@ -2845,14 +2846,16 @@ function startingItemsHud(heroId: number | null) {
   const displayItems = items.length > 0
     ? items.slice(0, HUD.focus ? 2 : 3)
     : [
-        { id: 1, name: "Basic Magazine", slot: "weapon" as const, delta: 0.02 },
-        { id: 2, name: "Extra Health", slot: "vitality" as const, delta: 0.03 },
-        { id: 3, name: "Extra Spirit", slot: "spirit" as const, delta: 0.02 },
+        { id: 1, name: "Basic Magazine", slot: "weapon" as const, cost: null, delta: undefined },
+        { id: 2, name: "Extra Health", slot: "vitality" as const, cost: null, delta: undefined },
+        { id: 3, name: "Extra Spirit", slot: "spirit" as const, cost: null, delta: undefined },
       ].slice(0, HUD.focus ? 2 : 3);
+  // tier 1 price from the tier table (the old hard-coded 500 was a pre-patch price)
+  const t1 = itemCost({ item_tier: 1 });
 
   return `<section class="card hud beli">
     <div class="hud-title-bar">
-      <h3>Beli <small>0:00 · 500 souls</small></h3>
+      <h3>Beli <small>0:00 · Tier 1 = ${souls(t1)}</small></h3>
       <span class="tag hot" style="font-size:10px">AWAL GAME</span>
     </div>
     <div class="small muted" style="margin-bottom:6px">${ic("bag")} Beli item Tier 1 di base sebelum zipline · <b>${esc(heroName)}</b>:</div>
@@ -2863,10 +2866,9 @@ function startingItemsHud(heroId: number | null) {
           <div class="grow2">
             <div class="row">
               <span class="name ${SLOT_CLS[it.slot] ?? ""}">${esc(it.name)}</span>
-              <span class="small">500</span>
-              <span class="tag ok" style="font-weight:bold">BISA BELI</span>
+              <span class="small">${souls(it.cost || t1)}</span>
             </div>
-            <div class="small muted clamp1">${it.delta !== undefined ? `Tier 1 rekomendasi (${delta(it.delta)})` : "Pilihan awal"}</div>
+            <div class="small muted clamp1">${it.delta !== undefined ? `Tier 1 rekomendasi (${delta(it.delta)})` : "Pilihan awal umum (data hero belum masuk)"}</div>
           </div>
         </div>`,
       )

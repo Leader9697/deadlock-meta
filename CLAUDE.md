@@ -85,8 +85,15 @@ uses the **HUD widgets** in game; he rarely opens the main panel. Keep the HUD c
   delegated listeners (see the hero-icon `error` listener). A `site_base` on a LAN IP over plain
   http needs that host added to `connect-src`.
 
+- **Lab Build auto** (`autobuild.ts`, `/api/lab/auto/[id]`, `AutoBuildPanel` at the top of `/lab`): pick a hero and a
+  full ordered build is computed per situation (Standar, Unggul, Tertinggal, Lawan senjata / spirit / heal / CC / tank),
+  no typing. Score per slot = item-flow net-worth-adjusted WR + WR vs same tier (both shrunk) + popularity + Lab stat
+  gain at that phase's net worth (capped) + `kitFit` + situation bonus − phase misfit / unproven / 3rd active. Keeps
+  the tier floor, 4/category + flex, upgrade = component deducted, sell only a lower tier. Shows a modest WR estimate
+  (hero WR + ½ mean edge, clamped) next to the closest public build's measured WR + ID (for in-game auto-buy).
+
 ## Key modules (packages/core/src)
-adaptive.ts (build path, needs, sell, tiers) · coach.ts (tips) · gameplan.ts (delay-proof plan from
+adaptive.ts (build path, needs, sell, tiers) · autobuild.ts (Lab auto build per scenario) · coach.ts (tips) · gameplan.ts (delay-proof plan from
 lineup strength per phase) · macro.ts (lane objective states; its farm/push calls are no longer
 shown) · imbue.ts (which ability to imbue + why, stat + build data) · spikes.ts · playbook.ts ·
 combo.ts · deathreview.ts · postmatch.ts · matchlog.ts (calibration) · habits.ts (cross-match
